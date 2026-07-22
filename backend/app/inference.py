@@ -62,6 +62,120 @@ def _describe_target(action, candidates, parsed):
     return "Process"
 
 
+def _generate_reasoning(action, candidates, parsed):
+    task_lookup = {t["id"]: t for t in parsed.tasks}
+
+    if not candidates:
+        return "This action was identified as beneficial for the process."
+
+    if action == "parallelism":
+        c = candidates[0]
+        task_a = task_lookup.get(c["task_a"], {})
+        task_b = task_lookup.get(c["task_b"], {})
+        name_a = task_a.get("name", c["task_a"])
+        name_b = task_b.get("name", c["task_b"])
+        res_a = task_a.get("resource", "an unspecified role")
+        res_b = task_b.get("resource", "an unspecified role")
+        return (
+            f"\"{name_a}\" ({res_a}) and \"{name_b}\" ({res_b}) run one after another "
+            f"but don't depend on each other's output, and are handled by different resources. "
+            f"Running them at the same time removes the wait between them."
+        )
+
+    if action == "automation":
+        c = candidates[0]
+        task = task_lookup.get(c["task_id"], {})
+        resource = task.get("resource", "a person")
+        name = task.get("name", c["task_id"])
+        return (
+            f"\"{name}\" is currently handled by {resource} and its name doesn't indicate "
+            f"a step that requires human judgment (e.g. approving, reviewing, or deciding). "
+            f"Routine, judgment-free steps like this are good automation candidates — "
+            f"they typically get faster and cheaper once handled by a system instead of a person."
+        )
+
+    if action == "elimination":
+        c = candidates[0]
+        task = task_lookup.get(c["task_id"], {})
+        duration = task.get("duration", 0)
+        cost = task.get("cost", 0)
+        return (
+            f"\"{task.get('name', c['task_id'])}\" has a notably low duration ({duration}h) and cost "
+            f"(${cost}) compared to the rest of the process, suggesting it adds little value relative "
+            f"to its footprint — a candidate for removal rather than optimization."
+        )
+
+    if action == "composition":
+        c = candidates[0]
+        task_a = task_lookup.get(c["task_a"], {})
+        task_b = task_lookup.get(c["task_b"], {})
+        res_a = task_a.get("resource", "?")
+        res_b = task_b.get("resource", "?")
+        return (
+            f"\"{task_a.get('name', c['task_a'])}\" and \"{task_b.get('name', c['task_b'])}\" are "
+            f"consecutive steps both handled by {res_a}. Since the same resource does both, merging "
+            f"them into one step avoids handoff and setup overhead between them."
+        )
+
+    if action == "case_based_work":
+        c = candidates[0]
+        costs = c.get("branch_costs", [])
+        return (
+            f"The branches at this decision point have noticeably different costs ({costs}), "
+            f"suggesting some cases are simpler than others. Routing them differently lets simple "
+            f"cases skip the overhead that only complex cases need."
+        )
+
+    if action == "resequencing":
+        c = candidates[0]
+        expensive = task_lookup.get(c["expensive_task"], {})
+        cheaper = task_lookup.get(c["cheaper_task"], {})
+        return (
+            f"\"{cheaper.get('name', c['cheaper_task'])}\" (${cheaper.get('cost', 0)}) currently runs "
+            f"after \"{expensive.get('name', c['expensive_task'])}\" (${expensive.get('cost', 0)}), "
+            f"which costs more. Doing the cheaper check first avoids paying for the expensive step "
+            f"on cases that would fail the cheaper check anyway."
+        )
+
+    if action == "numerical_involvement":
+        roles = candidates
+        return (
+            f"The process currently involves multiple distinct human roles ({', '.join(roles)}). "
+            f"Consolidating these into fewer roles reduces handoffs and waiting time between people."
+        )
+
+    if action == "knockout":
+        c = candidates[0]
+        task = task_lookup.get(c["check_first"], {})
+        prob = c.get("probability", 0)
+        return (
+            f"\"{task.get('name', c['check_first'])}\" is the less likely outcome at this decision "
+            f"point (probability {prob}). Checking it first means cases likely to fail this check "
+            f"are caught early, before money is spent on the more expensive path."
+        )
+
+    if action == "trusted_party":
+        c = candidates[0]
+        task = task_lookup.get(c["task_id"], {})
+        return (
+            f"\"{task.get('name', c['task_id'])}\" has an unusually high cost per hour compared to "
+            f"the rest of the process, suggesting it may be cheaper to hand off to a specialized "
+            f"external party rather than keep handling it in-house."
+        )
+
+    if action == "extra_resources":
+        c = candidates[0]
+        task = task_lookup.get(c["task_id"], {})
+        duration = task.get("duration", 0)
+        return (
+            f"\"{task.get('name', c['task_id'])}\" takes noticeably longer ({duration}h) than the "
+            f"average step in this process, making it a likely bottleneck. Adding resources here "
+            f"reduces the time spent waiting on this step, at the cost of higher spend."
+        )
+
+    return "This action was identified as beneficial based on the process's current structure."
+
+
 def load_q_table(path=MODEL_PATH):
     with open(path, "rb") as f:
         return pickle.load(f)
@@ -122,6 +236,7 @@ def redesign_process(bpmn_path, q_table, max_steps=10, seed=0,
         metrics_before = env.current_metrics
         candidates_before = env.current_details[action]
         target_description = _describe_target(action, candidates_before, pre_step_parsed)
+        reasoning = _generate_reasoning(action, candidates_before, pre_step_parsed)
 
         next_state, reward, done, info = env.step(action)
 
@@ -157,7 +272,7 @@ def redesign_process(bpmn_path, q_table, max_steps=10, seed=0,
             "step": step_num,
             "heuristic": HEURISTIC_LABELS[action],
             "applied_to": target_description,
-            "reason": f"Applying {HEURISTIC_LABELS[action]} improved the process based on learned patterns.",
+            "reason": reasoning,
             "time_before": metrics_before["total_time_hours"],
             "time_after": metrics_after["total_time_hours"],
             "cost_before": metrics_before["total_cost_usd"],
@@ -205,7 +320,7 @@ def redesign_process(bpmn_path, q_table, max_steps=10, seed=0,
 if __name__ == "__main__":
     q_table = load_q_table()
 
-    result = redesign_process("data/training_processes/process_0000.bpmn", q_table, seed=1)
+    result = redesign_process("data/training_processes_en/process_0000.bpmn", q_table, seed=1)
 
     print("AS-IS:", result["as_is"])
     print("TO-BE:", result["to_be"])
@@ -213,4 +328,6 @@ if __name__ == "__main__":
     print("Stopping reason:", result["stopping_reason"])
     print("\nRedesign Trace:")
     for step in result["redesign_trace"]:
-        print(f"  Step {step['step']}: {step['heuristic']} on {step['applied_to']} | Time {step['time_before']}→{step['time_after']} ({step['time_delta_pct']}%) | Cost {step['cost_before']}→{step['cost_after']} ({step['cost_delta_pct']}%)")
+        print(f"\nStep {step['step']}: {step['heuristic']} on {step['applied_to']}")
+        print(f"  Reason: {step['reason']}")
+        print(f"  Time {step['time_before']}→{step['time_after']} ({step['time_delta_pct']}%) | Cost {step['cost_before']}→{step['cost_after']} ({step['cost_delta_pct']}%)")

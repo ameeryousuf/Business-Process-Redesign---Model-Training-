@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, Fragment } from "react";
 import BpmnDiagram from "@/components/BpmnDiagram";
 
 export default function Home() {
@@ -8,6 +8,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [expandedStep, setExpandedStep] = useState(null);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (selectedFile) => {
@@ -26,6 +27,7 @@ export default function Home() {
     setFile(selectedFile);
     setResult(null);
     setError(null);
+    setExpandedStep(null);
   };
 
   const handleFileChange = (e) => handleFileSelect(e.target.files[0]);
@@ -87,6 +89,7 @@ export default function Home() {
     setFile(null);
     setResult(null);
     setError(null);
+    setExpandedStep(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -102,6 +105,10 @@ export default function Home() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const toggleStep = (stepNum) => {
+    setExpandedStep(expandedStep === stepNum ? null : stepNum);
   };
 
   return (
@@ -257,7 +264,7 @@ export default function Home() {
                 Redesign Trace
               </p>
 
-              <table className="w-full border-collapse min-w-[720px]">
+              <table className="w-full border-collapse min-w-[760px]">
                 <thead>
                   <tr style={{ borderBottom: "1px solid var(--panel-border)" }}>
                     <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4 w-10">
@@ -272,61 +279,96 @@ export default function Home() {
                     <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
                       Time
                     </th>
-                    <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3">
+                    <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
                       Cost
+                    </th>
+                    <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 w-16">
+                      Why
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {result.redesign_trace.map((step, idx) => (
-                    <tr
-                      key={step.step}
-                      style={{
-                        borderBottom:
-                          idx !== result.redesign_trace.length - 1
-                            ? "1px solid var(--panel-border)"
-                            : "none",
-                      }}
-                    >
-                      <td className="py-3.5 pr-4 font-mono text-xs text-gray-300 align-top">
-                        {String(step.step).padStart(2, "0")}
-                      </td>
-                      <td className="py-3.5 pr-4 align-top">
-                        <span
-                          className="inline-block text-xs font-medium px-2.5 py-1 rounded-md"
-                          style={{ color: "var(--accent)", background: "var(--accent-soft)" }}
-                        >
-                          {step.heuristic}
-                        </span>
-                      </td>
-                      <td className="py-3.5 pr-4 text-sm text-gray-700 align-top">
-                        {step.applied_to}
-                      </td>
-                      <td className="py-3.5 pr-4 text-right align-top">
-                        <div className="font-mono text-sm text-gray-900">
-                          {step.time_before}h → {step.time_after}h
-                        </div>
-                        {step.time_delta_pct > 0 && (
-                          <div className="text-xs font-mono" style={{ color: "var(--good)" }}>
-                            −{step.time_delta_pct}%
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3.5 text-right align-top">
-                        <div className="font-mono text-sm text-gray-900">
-                          ${step.cost_before} → ${step.cost_after}
-                        </div>
-                        {step.cost_delta_pct !== 0 && (
-                          <div
-                            className="text-xs font-mono"
-                            style={{ color: step.cost_delta_pct > 0 ? "var(--good)" : "var(--baseline)" }}
+                    <Fragment key={step.step}>
+                      <tr
+                        style={{
+                          borderBottom:
+                            expandedStep === step.step
+                              ? "none"
+                              : idx !== result.redesign_trace.length - 1
+                                ? "1px solid var(--panel-border)"
+                                : "none",
+                        }}
+                      >
+                        <td className="py-3.5 pr-4 font-mono text-xs text-gray-300 align-top">
+                          {String(step.step).padStart(2, "0")}
+                        </td>
+                        <td className="py-3.5 pr-4 align-top">
+                          <span
+                            className="inline-block text-xs font-medium px-2.5 py-1 rounded-md"
+                            style={{ color: "var(--accent)", background: "var(--accent-soft)" }}
                           >
-                            {step.cost_delta_pct > 0 ? "−" : "+"}
-                            {Math.abs(step.cost_delta_pct)}%
+                            {step.heuristic}
+                          </span>
+                        </td>
+                        <td className="py-3.5 pr-4 text-sm text-gray-700 align-top">
+                          {step.applied_to}
+                        </td>
+                        <td className="py-3.5 pr-4 text-right align-top">
+                          <div className="font-mono text-sm text-gray-900">
+                            {step.time_before}h → {step.time_after}h
                           </div>
-                        )}
-                      </td>
-                    </tr>
+                          {step.time_delta_pct > 0 && (
+                            <div className="text-xs font-mono" style={{ color: "var(--good)" }}>
+                              −{step.time_delta_pct}%
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 pr-4 text-right align-top">
+                          <div className="font-mono text-sm text-gray-900">
+                            ${step.cost_before} → ${step.cost_after}
+                          </div>
+                          {step.cost_delta_pct !== 0 && (
+                            <div
+                              className="text-xs font-mono"
+                              style={{ color: step.cost_delta_pct > 0 ? "var(--good)" : "var(--baseline)" }}
+                            >
+                              {step.cost_delta_pct > 0 ? "−" : "+"}
+                              {Math.abs(step.cost_delta_pct)}%
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 text-right align-top">
+                          <button
+                            onClick={() => toggleStep(step.step)}
+                            className="text-xs font-medium px-2.5 py-1 rounded-md hover:bg-gray-100 transition-colors"
+                            style={{ color: "var(--accent)" }}
+                          >
+                            {expandedStep === step.step ? "Hide" : "Show"}
+                          </button>
+                        </td>
+                      </tr>
+                      {expandedStep === step.step && (
+                        <tr
+                          style={{
+                            borderBottom:
+                              idx !== result.redesign_trace.length - 1
+                                ? "1px solid var(--panel-border)"
+                                : "none",
+                          }}
+                        >
+                          <td></td>
+                          <td colSpan={5} className="pb-4 pr-4">
+                            <div
+                              className="text-sm text-gray-600 leading-relaxed p-4 rounded-lg"
+                              style={{ background: "var(--accent-soft)" }}
+                            >
+                              {step.reason}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
