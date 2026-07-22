@@ -1,7 +1,7 @@
 from deep_translator import GoogleTranslator
 
 
-def translate_names(parsed):
+def translate_names(parsed, timeout=10):
     all_items = []
     all_items.extend(parsed.tasks)
     all_items.extend(parsed.gateways)
@@ -20,7 +20,8 @@ def translate_names(parsed):
     unique_names = list(set(names_to_translate))
 
     try:
-        translated_list = GoogleTranslator(source="auto", target="en").translate_batch(unique_names)
+        translator = GoogleTranslator(source="auto", target="en", timeout=timeout)
+        translated_list = translator.translate_batch(unique_names)
         translation_map = dict(zip(unique_names, translated_list))
     except Exception as e:
         print(f"Translation failed, keeping original names: {e}")

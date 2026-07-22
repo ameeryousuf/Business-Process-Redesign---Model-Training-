@@ -18,6 +18,18 @@ GATEWAY_TAG_TYPES = {
     "complexGateway": "complex"
 }
 
+INTERMEDIATE_EVENT_TAGS = [
+    "intermediateCatchEvent",
+    "intermediateThrowEvent",
+    "boundaryEvent",
+]
+
+SUBPROCESS_TAGS = [
+    "subProcess",
+    "transaction",
+    "adHocSubProcess",
+]
+
 
 class ParsedProcess:
     def __init__(self):
@@ -26,6 +38,7 @@ class ParsedProcess:
         self.flows = []
         self.start_events = []
         self.end_events = []
+        self.other_elements = []
 
 
 def _extract_metrics(task_element):
@@ -108,6 +121,36 @@ def parse_bpmn(filepath):
             "name": end.get("name")
         })
 
+    for tag in INTERMEDIATE_EVENT_TAGS:
+        for elem in process.findall(f"bpmn:{tag}", BPMN_NS):
+            result.other_elements.append({
+                "id": elem.get("id"),
+                "name": elem.get("name"),
+                "kind": tag
+            })
+
+    for tag in SUBPROCESS_TAGS:
+        for elem in process.findall(f"bpmn:{tag}", BPMN_NS):
+            result.other_elements.append({
+                "id": elem.get("id"),
+                "name": elem.get("name"),
+                "kind": tag
+            })
+            for sub_task_tag in TASK_TAGS:
+                for sub_task in elem.findall(f"bpmn:{sub_task_tag}", BPMN_NS):
+                    sub_id = sub_task.get("id")
+                    if sub_id in seen_task_ids:
+                        continue
+                    seen_task_ids.add(sub_id)
+                    metrics = _extract_metrics(sub_task)
+                    result.tasks.append({
+                        "id": sub_id,
+                        "name": sub_task.get("name"),
+                        "duration": metrics["duration"],
+                        "cost": metrics["cost"],
+                        "resource": metrics["resource"]
+                    })
+
     return result
 
 
@@ -125,3 +168,7 @@ if __name__ == "__main__":
     print("Flows:")
     for f in parsed.flows:
         print(" ", f)
+
+    print("Other elements (intermediate events, subprocesses):")
+    for o in parsed.other_elements:
+        print(" ", o)

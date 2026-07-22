@@ -1,63 +1,21 @@
 import os
 import glob
-import random
 
-from app.bpmn_parser import parse_bpmn
 from app.inference import load_q_table, redesign_process
 
-RAW_DATASET_DIR = "data/raw_dataset"
-TRAINING_DIR = "data/training_processes"
-NUM_EVAL_FILES = 50
-
-
-def find_all_raw_bpmn_files():
-    pattern = os.path.join(RAW_DATASET_DIR, "**", "*.bpmn")
-    return glob.glob(pattern, recursive=True)
-
-
-def is_valid_process(filepath):
-    try:
-        parsed = parse_bpmn(filepath)
-    except Exception:
-        return False
-
-    if len(parsed.tasks) < 2:
-        return False
-    if len(parsed.start_events) == 0 or len(parsed.end_events) == 0:
-        return False
-    if len(parsed.flows) == 0:
-        return False
-
-    return True
-
-
-def select_held_out_files(seed=123):
-    all_raw_files = find_all_raw_bpmn_files()
-
-    valid_files = [f for f in all_raw_files if is_valid_process(f)]
-
-    rng = random.Random(seed)
-    rng.shuffle(valid_files)
-
-    held_out = []
-    for filepath in valid_files:
-        if len(held_out) >= NUM_EVAL_FILES:
-            break
-        held_out.append(filepath)
-
-    return held_out
+EVAL_DIR = "data/eval_processes"
 
 
 def run_evaluation():
     q_table = load_q_table()
-    held_out_files = select_held_out_files()
+    eval_files = sorted(glob.glob(os.path.join(EVAL_DIR, "*.bpmn")))
 
-    print(f"Evaluating on {len(held_out_files)} held-out files...")
+    print(f"Evaluating on {len(eval_files)} held-out files...")
 
     results = []
     failures = []
 
-    for i, filepath in enumerate(held_out_files):
+    for i, filepath in enumerate(eval_files):
         try:
             result = redesign_process(filepath, q_table, seed=i)
             results.append({
