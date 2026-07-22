@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+:root {
+  --page-bg: #fafafa;
+  --panel-bg: #ffffff;
+  --panel-border: #e5e7eb;
+  --text-primary: #111827;
+  --text-muted: #6b7280;
+  --text-faint: #9ca3af;
+  --accent: #4f46e5;
+  --accent-soft: #eef2ff;
+  --good: #059669;
+  --good-soft: #ecfdf5;
+  --baseline: #d97706;
+  --baseline-soft: #fffbeb;
+}
+
+body {
+  background: var(--page-bg);
+  font-family: var(--font-body), sans-serif;
+  color: var(--text-primary);
+}
+
+.font-display {
+  font-family: var(--font-display), sans-serif;
+}
+
+.font-mono {
+  font-family: var(--font-mono), monospace;
+}
