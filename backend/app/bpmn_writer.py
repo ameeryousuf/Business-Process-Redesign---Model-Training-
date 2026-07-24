@@ -6,12 +6,14 @@ BPMNDI_NS = "http://www.omg.org/spec/BPMN/20100524/DI"
 DC_NS = "http://www.omg.org/spec/DD/20100524/DC"
 DI_NS = "http://www.omg.org/spec/DD/20100524/DI"
 COLOR_NS = "http://www.omg.org/spec/BPMN/non-normative/color/1.0"
+META_NS = "http://bpm-redesign-engine/schema/meta"
 
 ET.register_namespace("bpmn", BPMN_NS)
 ET.register_namespace("bpmndi", BPMNDI_NS)
 ET.register_namespace("dc", DC_NS)
 ET.register_namespace("di", DI_NS)
 ET.register_namespace("color", COLOR_NS)
+ET.register_namespace("meta", META_NS)
 
 NODE_SIZES = {
     "event": (36, 36),
@@ -35,6 +37,20 @@ NODE_COLORS = {
     "inclusive": ("#fff6e5", "#d99a1f"),
     "event_based": ("#fff6e5", "#d99a1f"),
     "complex": ("#fff6e5", "#d99a1f"),
+    "intermediate_event": ("#f5f5f0", "#8a8a70"),
+    "subprocess": ("#f0f0f0", "#6b6b6b"),
+}
+
+INTERMEDIATE_EVENT_KINDS = {"intermediateCatchEvent", "intermediateThrowEvent", "boundaryEvent"}
+SUBPROCESS_KINDS = {"subProcess", "transaction", "adHocSubProcess"}
+
+BPMN_TAG_FOR_KIND = {
+    "intermediateCatchEvent": "intermediateCatchEvent",
+    "intermediateThrowEvent": "intermediateThrowEvent",
+    "boundaryEvent": "boundaryEvent",
+    "subProcess": "subProcess",
+    "transaction": "transaction",
+    "adHocSubProcess": "adHocSubProcess",
 }
 
 
@@ -54,6 +70,14 @@ def _build_node_type_map(parsed):
     for t in parsed.tasks:
         node_types[t["id"]] = "task"
         node_categories[t["id"]] = "task"
+    for o in parsed.other_elements:
+        kind = o.get("kind", "")
+        if kind in INTERMEDIATE_EVENT_KINDS:
+            node_types[o["id"]] = "event"
+            node_categories[o["id"]] = "intermediate_event"
+        elif kind in SUBPROCESS_KINDS:
+            node_types[o["id"]] = "task"
+            node_categories[o["id"]] = "subprocess"
 
     return node_types, node_categories
 
@@ -232,7 +256,7 @@ def _build_waypoints(source_id, target_id, positions, levels, all_rects):
     return path
 
 
-def parsed_to_bpmn_xml(parsed, process_id="Process_1"):
+def parsed_to_bpmn_xml(parsed, process_id="Process_1", include_metrics=False):
     definitions = ET.Element(f"{{{BPMN_NS}}}definitions", {
         "id": "Definitions_1",
         "targetNamespace": "http://bpmn.io/schema/bpmn"
@@ -253,10 +277,17 @@ def parsed_to_bpmn_xml(parsed, process_id="Process_1"):
         known_ids.add(start["id"])
 
     for task in parsed.tasks:
-        ET.SubElement(process, f"{{{BPMN_NS}}}task", {
+        task_el = ET.SubElement(process, f"{{{BPMN_NS}}}task", {
             "id": task["id"],
             "name": task.get("name") or ""
         })
+        if include_metrics:
+            ext = ET.SubElement(task_el, f"{{{BPMN_NS}}}extensionElements")
+            ET.SubElement(ext, f"{{{META_NS}}}metrics", {
+                "duration": str(task.get("duration", 0.0)),
+                "cost": str(task.get("cost", 0.0)),
+                "resource": str(task.get("resource") or "")
+            })
         known_ids.add(task["id"])
 
     for gateway in parsed.gateways:
@@ -275,17 +306,33 @@ def parsed_to_bpmn_xml(parsed, process_id="Process_1"):
         })
         known_ids.add(end["id"])
 
+    for other in parsed.other_elements:
+        kind = other.get("kind", "")
+        tag = BPMN_TAG_FOR_KIND.get(kind)
+        if tag is None:
+            continue
+        ET.SubElement(process, f"{{{BPMN_NS}}}{tag}", {
+            "id": other["id"],
+            "name": other.get("name") or ""
+        })
+        known_ids.add(other["id"])
+
     valid_flows = [
         f for f in parsed.flows
         if f["source"] in known_ids and f["target"] in known_ids
     ]
 
     for flow in valid_flows:
-        ET.SubElement(process, f"{{{BPMN_NS}}}sequenceFlow", {
+        flow_el = ET.SubElement(process, f"{{{BPMN_NS}}}sequenceFlow", {
             "id": flow["id"],
             "sourceRef": flow["source"],
             "targetRef": flow["target"]
         })
+        if include_metrics:
+            ext = ET.SubElement(flow_el, f"{{{BPMN_NS}}}extensionElements")
+            ET.SubElement(ext, f"{{{META_NS}}}probability", {
+                "value": str(flow.get("probability", 1.0))
+            })
 
     node_types, node_categories = _build_node_type_map(parsed)
     all_node_ids = list(known_ids)

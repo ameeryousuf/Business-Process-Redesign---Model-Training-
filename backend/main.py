@@ -36,7 +36,7 @@ async def redesign(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
 
     try:
-        result = redesign_process(temp_path, q_table, seed=42)
+        result = redesign_process(temp_path, q_table)
         return result
     except Exception as e:
         return {"error": str(e)}

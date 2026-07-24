@@ -1,7 +1,25 @@
-from deep_translator import GoogleTranslator
+import argostranslate.translate
+
+_installed_languages = argostranslate.translate.get_installed_languages()
+_de_lang = next((l for l in _installed_languages if l.code == "de"), None)
+_en_lang = next((l for l in _installed_languages if l.code == "en"), None)
+
+if _de_lang and _en_lang:
+    _translation = _de_lang.get_translation(_en_lang)
+else:
+    _translation = None
 
 
-def translate_names(parsed, timeout=10):
+def _translate_one(name):
+    if _translation is None:
+        return name
+    try:
+        return _translation.translate(name)
+    except Exception:
+        return name
+
+
+def translate_names(parsed):
     all_items = []
     all_items.extend(parsed.tasks)
     all_items.extend(parsed.gateways)
@@ -18,14 +36,7 @@ def translate_names(parsed, timeout=10):
         return parsed
 
     unique_names = list(set(names_to_translate))
-
-    try:
-        translator = GoogleTranslator(source="auto", target="en", timeout=timeout)
-        translated_list = translator.translate_batch(unique_names)
-        translation_map = dict(zip(unique_names, translated_list))
-    except Exception as e:
-        print(f"Translation failed, keeping original names: {e}")
-        return parsed
+    translation_map = {name: _translate_one(name) for name in unique_names}
 
     for item in all_items:
         original_name = item.get("name")

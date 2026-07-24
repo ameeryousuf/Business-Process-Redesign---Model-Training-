@@ -3,7 +3,7 @@ import glob
 
 from app.inference import load_q_table, redesign_process
 
-EVAL_DIR = "data/eval_processes"
+EVAL_DIR = "data/eval_final"
 
 
 def run_evaluation():
@@ -15,9 +15,9 @@ def run_evaluation():
     results = []
     failures = []
 
-    for i, filepath in enumerate(eval_files):
+    for filepath in eval_files:
         try:
-            result = redesign_process(filepath, q_table, seed=i)
+            result = redesign_process(filepath, q_table)
             results.append({
                 "file": os.path.basename(filepath),
                 "time_reduction": result["improvement"]["time_reduction_percent"],

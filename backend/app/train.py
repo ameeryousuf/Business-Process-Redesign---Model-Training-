@@ -4,12 +4,11 @@ import random
 import pickle
 
 from app.bpmn_parser import parse_bpmn
-from app.synthetic_metrics import enrich_process
 from app.environment import ProcessRedesignEnv
 from app.q_learning_agent import QLearningAgent
 from app.state_builder import HEURISTIC_ORDER
 
-DATASET_DIR = "data/training_processes_en"
+DATASET_DIR = "data/training_final"
 NUM_EPISODES = 5000
 MODEL_OUTPUT_PATH = "data/trained_q_table.pkl"
 
@@ -29,9 +28,8 @@ def run_training():
 
         env = ProcessRedesignEnv(filepath, time_low=5, time_high=20, cost_low=50, cost_high=200)
 
-        base_parsed = parse_bpmn(filepath)
-        enriched = enrich_process(base_parsed, seed=episode_num)
-        env.parsed = enriched
+        parsed = parse_bpmn(filepath)
+        env.parsed = parsed
         env.step_count = 0
         env.baseline_metrics = None
         state = env._get_state()

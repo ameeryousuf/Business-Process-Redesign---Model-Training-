@@ -1,39 +1,4 @@
-from app.heuristics.parallelism import detect_parallelism
-from app.heuristics.elimination import detect_elimination
-from app.heuristics.automation import detect_automation
-from app.heuristics.composition import detect_composition
-from app.heuristics.case_based_work import detect_case_based_work
-from app.heuristics.resequencing import detect_resequencing
-from app.heuristics.numerical_involvement import detect_numerical_involvement
-from app.heuristics.knockout import detect_knockout
-from app.heuristics.trusted_party import detect_trusted_party
-from app.heuristics.extra_resources import detect_extra_resources
-
-HEURISTIC_ORDER = [
-    "parallelism",
-    "elimination",
-    "automation",
-    "composition",
-    "case_based_work",
-    "resequencing",
-    "numerical_involvement",
-    "knockout",
-    "trusted_party",
-    "extra_resources",
-]
-
-DETECTORS = {
-    "parallelism": detect_parallelism,
-    "elimination": detect_elimination,
-    "automation": detect_automation,
-    "composition": detect_composition,
-    "case_based_work": detect_case_based_work,
-    "resequencing": detect_resequencing,
-    "numerical_involvement": detect_numerical_involvement,
-    "knockout": detect_knockout,
-    "trusted_party": detect_trusted_party,
-    "extra_resources": detect_extra_resources,
-}
+from app.heuristics.registry import HEURISTIC_ORDER, DETECTORS
 
 
 def bucket_value(value, low_cutoff, high_cutoff):

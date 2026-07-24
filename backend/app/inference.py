@@ -8,22 +8,16 @@ from app.metrics_calculator import calculate_metrics
 from app.state_builder import build_state, HEURISTIC_ORDER
 from app.environment import ProcessRedesignEnv
 from app.bpmn_writer import parsed_to_bpmn_xml
+from app.heuristics.registry import HEURISTIC_LABELS
 
 MODEL_PATH = "data/trained_q_table.pkl"
 MIN_IMPROVEMENT_THRESHOLD = 0.02
+DEFAULT_SEED = 42
 
-HEURISTIC_LABELS = {
-    "parallelism": "Parallelism",
-    "elimination": "Elimination",
-    "automation": "Automation",
-    "composition": "Composition",
-    "case_based_work": "Case-Based Work",
-    "resequencing": "Resequencing",
-    "numerical_involvement": "Numerical Involvement",
-    "knockout": "Knock-Out",
-    "trusted_party": "Trusted Party / Outsourcing",
-    "extra_resources": "Extra Resources"
-}
+def _already_has_baked_metrics(parsed):
+    if not parsed.tasks:
+        return False
+    return all(t.get("resource") for t in parsed.tasks)
 
 
 def _describe_target(action, candidates, parsed):
@@ -191,13 +185,17 @@ def pick_best_action(q_table, state, eligible_actions):
     return best[0]
 
 
-def redesign_process(bpmn_path, q_table, max_steps=10, seed=0,
+def redesign_process(bpmn_path, q_table, max_steps=10,
                       time_low=5, time_high=20, cost_low=50, cost_high=200,
                       min_improvement_threshold=MIN_IMPROVEMENT_THRESHOLD):
 
     parsed = parse_bpmn(bpmn_path)
-    parsed = translate_names(parsed)
-    enriched = enrich_process(parsed, seed=seed)
+
+    if _already_has_baked_metrics(parsed):
+        enriched = parsed
+    else:
+        parsed = translate_names(parsed)
+        enriched = enrich_process(parsed, seed=DEFAULT_SEED)
 
     as_is_xml = parsed_to_bpmn_xml(enriched, process_id="Process_AsIs")
 
@@ -320,7 +318,7 @@ def redesign_process(bpmn_path, q_table, max_steps=10, seed=0,
 if __name__ == "__main__":
     q_table = load_q_table()
 
-    result = redesign_process("data/training_processes_en/process_0000.bpmn", q_table, seed=1)
+    result = redesign_process("data/eval_final/eval_0001.bpmn", q_table)
 
     print("AS-IS:", result["as_is"])
     print("TO-BE:", result["to_be"])
@@ -328,6 +326,4 @@ if __name__ == "__main__":
     print("Stopping reason:", result["stopping_reason"])
     print("\nRedesign Trace:")
     for step in result["redesign_trace"]:
-        print(f"\nStep {step['step']}: {step['heuristic']} on {step['applied_to']}")
-        print(f"  Reason: {step['reason']}")
-        print(f"  Time {step['time_before']}→{step['time_after']} ({step['time_delta_pct']}%) | Cost {step['cost_before']}→{step['cost_after']} ({step['cost_delta_pct']}%)")
+        print(f"  Step {step['step']}: {step['heuristic']} on {step['applied_to']} | Time {step['time_before']}→{step['time_after']} ({step['time_delta_pct']}%) | Cost {step['cost_before']}→{step['cost_after']} ({step['cost_delta_pct']}%)")

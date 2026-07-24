@@ -34,12 +34,19 @@ def assign_synthetic_task_metrics(parsed, seed=None):
 def assign_synthetic_probabilities(parsed, seed=None):
     rng = random.Random(seed)
 
+    gateway_type_lookup = {g["id"]: g.get("type", "exclusive") for g in parsed.gateways}
+
     graph = {}
     for flow in parsed.flows:
         graph.setdefault(flow["source"], []).append(flow)
 
     for source_id, outgoing_flows in graph.items():
         if len(outgoing_flows) <= 1:
+            for flow in outgoing_flows:
+                flow["probability"] = 1.0
+            continue
+
+        if gateway_type_lookup.get(source_id) == "parallel":
             for flow in outgoing_flows:
                 flow["probability"] = 1.0
             continue
@@ -67,7 +74,7 @@ if __name__ == "__main__":
     from app.bpmn_parser import parse_bpmn
     from app.metrics_calculator import calculate_metrics
 
-    parsed = parse_bpmn("data/training_processes/process_0000.bpmn")
+    parsed = parse_bpmn("data/training_processes_en/process_0000.bpmn")
     print("Tasks BEFORE enrichment:", parsed.tasks[:2])
 
     enriched = enrich_process(parsed, seed=42)
