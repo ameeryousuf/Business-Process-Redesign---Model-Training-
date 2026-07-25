@@ -41,6 +41,13 @@ class ParsedProcess:
         self.other_elements = []
 
 
+# Optional per-task keys used by the target-schema pipeline (app/target_schema_parser.py):
+#   value_classification: "VA" | "BVA" | "NVA" | None  -- real value-add taxonomy when available
+#   is_subprocess: bool  -- True for tasks resolved from a child_process_id reference;
+#                           these are frozen (excluded from all heuristic detectors)
+# bpmn_parser.py never sets these; callers should treat their absence as None / False.
+
+
 def _extract_metrics(task_element):
     ext = task_element.find("bpmn:extensionElements", BPMN_NS)
     if ext is None:
@@ -72,6 +79,15 @@ def _extract_probability(flow_element):
 def parse_bpmn(filepath):
     tree = ET.parse(filepath)
     root = tree.getroot()
+    return _parse_root(root)
+
+
+def parse_bpmn_string(xml_string):
+    root = ET.fromstring(xml_string)
+    return _parse_root(root)
+
+
+def _parse_root(root):
     process = root.find("bpmn:process", BPMN_NS)
 
     result = ParsedProcess()

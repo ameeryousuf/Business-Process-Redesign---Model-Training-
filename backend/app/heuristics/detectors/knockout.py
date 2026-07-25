@@ -1,5 +1,5 @@
 def detect_knockout(parsed, skew_threshold=0.2):
-    task_ids = {t["id"] for t in parsed.tasks}
+    task_ids = {t["id"] for t in parsed.tasks if not t.get("is_subprocess")}
 
     graph = {}
     for flow in parsed.flows:

@@ -28,6 +28,9 @@ def detect_resequencing(parsed):
         source_task = task_lookup[source_id]
         target_task = task_lookup[target_id]
 
+        if source_task.get("is_subprocess") or target_task.get("is_subprocess"):
+            continue
+
         if target_task["cost"] < source_task["cost"]:
             candidates.append({
                 "expensive_task": source_id,

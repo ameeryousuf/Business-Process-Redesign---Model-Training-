@@ -1,8 +1,30 @@
 def detect_elimination(parsed, threshold_ratio=0.2):
-    tasks = parsed.tasks
+    tasks = [t for t in parsed.tasks if not t.get("is_subprocess")]
 
     if len(tasks) <= 1:
         return {"eligible": False, "candidates": []}
+
+    # When real value-add classification is available (VA/BVA/NVA, e.g. from the
+    # SaaS's own task data), it is the literature-correct signal for Elimination
+    # ("an activity is superfluous if it adds no value from a customer's point of
+    # view") -- use it directly instead of the cost/duration proxy below.
+    classified_tasks = [t for t in tasks if t.get("value_classification")]
+    if classified_tasks:
+        candidates = [
+            {
+                "task_id": task["id"],
+                "name": task["name"],
+                "duration": task["duration"],
+                "cost": task["cost"],
+                "value_classification": task["value_classification"]
+            }
+            for task in classified_tasks
+            if task["value_classification"] == "NVA"
+        ]
+        return {
+            "eligible": len(candidates) > 0,
+            "candidates": candidates
+        }
 
     avg_duration = sum(t["duration"] for t in tasks) / len(tasks)
     avg_cost = sum(t["cost"] for t in tasks) / len(tasks)

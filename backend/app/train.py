@@ -13,22 +13,24 @@ NUM_EPISODES = 5000
 MODEL_OUTPUT_PATH = "data/trained_q_table.pkl"
 
 
-def load_process_files():
-    return sorted(glob.glob(os.path.join(DATASET_DIR, "*.bpmn")))
+def load_process_files(dataset_dir=DATASET_DIR, file_pattern="*.bpmn"):
+    return sorted(glob.glob(os.path.join(dataset_dir, file_pattern)))
 
 
-def run_training():
-    files = load_process_files()
-    agent = QLearningAgent(actions=HEURISTIC_ORDER, epsilon_decay_episodes=int(NUM_EPISODES * 0.8))
+def run_training(dataset_dir=DATASET_DIR, file_pattern="*.bpmn", parser_fn=parse_bpmn,
+                  num_episodes=NUM_EPISODES):
+    files = load_process_files(dataset_dir, file_pattern)
+    agent = QLearningAgent(actions=HEURISTIC_ORDER, epsilon_decay_episodes=int(num_episodes * 0.8))
 
     episode_rewards = []
 
-    for episode_num in range(NUM_EPISODES):
+    for episode_num in range(num_episodes):
         filepath = random.choice(files)
 
-        env = ProcessRedesignEnv(filepath, time_low=5, time_high=20, cost_low=50, cost_high=200)
+        env = ProcessRedesignEnv(filepath, time_low=5, time_high=20, cost_low=50, cost_high=200,
+                                  parser_fn=parser_fn)
 
-        parsed = parse_bpmn(filepath)
+        parsed = parser_fn(filepath)
         env.parsed = parsed
         env.step_count = 0
         env.baseline_metrics = None
@@ -57,7 +59,7 @@ def run_training():
 
         if (episode_num + 1) % 500 == 0:
             avg_recent = sum(episode_rewards[-500:]) / len(episode_rewards[-500:])
-            print(f"Episode {episode_num + 1}/{NUM_EPISODES} - Avg reward (last 500): {avg_recent:.4f} - Q-table size: {len(agent.q_table)}")
+            print(f"Episode {episode_num + 1}/{num_episodes} - Avg reward (last 500): {avg_recent:.4f} - Q-table size: {len(agent.q_table)}")
 
     return agent, episode_rewards
 

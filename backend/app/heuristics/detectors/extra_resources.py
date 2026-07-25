@@ -1,5 +1,5 @@
 def detect_extra_resources(parsed, ratio_threshold=1.5):
-    tasks = parsed.tasks
+    tasks = [t for t in parsed.tasks if not t.get("is_subprocess")]
 
     if not tasks:
         return {"eligible": False, "candidates": []}

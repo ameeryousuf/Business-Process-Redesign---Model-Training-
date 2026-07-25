@@ -1,6 +1,11 @@
 "use client";
 import { useState, useRef, Fragment } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import BpmnDiagram from "@/components/BpmnDiagram";
+import MotionSection from "@/components/MotionSection";
+import CycleTimeAnalysis from "@/components/CycleTimeAnalysis";
+import CriticalPathView from "@/components/CriticalPathView";
+import RaciMatrix from "@/components/RaciMatrix";
 
 export default function Home() {
   const [file, setFile] = useState(null);
@@ -14,13 +19,13 @@ export default function Home() {
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
 
-    const validExtensions = [".bpmn", ".xml"];
+    const validExtensions = [".bpmn", ".xml", ".json"];
     const isValid = validExtensions.some((ext) =>
       selectedFile.name.toLowerCase().endsWith(ext)
     );
 
     if (!isValid) {
-      setError("Please upload a .bpmn or .xml file.");
+      setError("Please upload a .bpmn, .xml, or .json (SaaS process export) file.");
       return;
     }
 
@@ -54,14 +59,33 @@ export default function Home() {
     setLoading(true);
     setError(null);
 
-    const formData = new FormData();
-    formData.append("file", file);
+    const isJson = file.name.toLowerCase().endsWith(".json");
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/redesign", {
-        method: "POST",
-        body: formData,
-      });
+      let response;
+
+      if (isJson) {
+        let processData;
+        try {
+          processData = JSON.parse(await file.text());
+        } catch (parseErr) {
+          throw new Error("Could not parse this file as JSON. Is it a valid SaaS process export?");
+        }
+
+        response = await fetch("http://127.0.0.1:8000/redesign/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(processData),
+        });
+      } else {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        response = await fetch("http://127.0.0.1:8000/redesign", {
+          method: "POST",
+          body: formData,
+        });
+      }
 
       if (!response.ok) {
         throw new Error(`Server responded with status ${response.status}. Is the backend running?`);
@@ -112,24 +136,49 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen" style={{ background: "var(--page-bg)" }}>
+    <main className="min-h-screen">
+      {/* Hero */}
       <div className="border-b" style={{ borderColor: "var(--panel-border)" }}>
-        <div className="px-6 md:px-16 py-6 flex items-baseline gap-3">
-          <h1 className="font-display text-2xl font-semibold tracking-tight">
-            BPM Redesign Engine
-          </h1>
-          <span className="font-mono text-xs text-gray-400 uppercase tracking-widest">
-            RL-driven process optimization
-          </span>
+        <div className="px-6 md:px-16 py-14 md:py-20">
+          <motion.p
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="font-mono text-xs uppercase tracking-[0.2em] text-gray-400 mb-4"
+          >
+            RL-Driven Process Optimization
+          </motion.p>
+          <motion.h1
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.05 }}
+            className="font-display text-4xl md:text-6xl font-semibold tracking-tight leading-[1.05]"
+          >
+            BPM Redesign <span className="gradient-text">Engine</span>
+          </motion.h1>
+          <motion.p
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.12 }}
+            className="mt-5 max-w-2xl text-gray-500 text-base md:text-lg"
+          >
+            Upload a process — BPMN 2.0 or a SaaS process export — and get a quantitative,
+            literature-grounded redesign: cycle time, theoretical cycle time, cycle time
+            efficiency, critical path, and RACI, before and after.
+          </motion.p>
         </div>
       </div>
 
-      <div className="px-6 md:px-16 py-10 space-y-6">
-        <div
+      <div className="px-6 md:px-16 py-10 space-y-6 max-w-6xl mx-auto">
+        {/* Upload zone */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.18 }}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
-          className="rounded-2xl p-8 border-2 border-dashed transition-colors"
+          className="rounded-2xl p-8 border-2 border-dashed transition-colors card-shadow"
           style={{
             borderColor: isDragging ? "var(--accent)" : "var(--panel-border)",
             background: isDragging ? "var(--accent-soft)" : "var(--panel-bg)",
@@ -138,10 +187,10 @@ export default function Home() {
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="text-center md:text-left">
               <p className="font-medium text-gray-900">
-                {file ? file.name : "Drop a .bpmn file here, or browse to select one"}
+                {file ? file.name : "Drop a .bpmn or SaaS process .json file here, or browse to select one"}
               </p>
               <p className="text-gray-400 text-sm mt-1">
-                Accepts BPMN 2.0 XML process files
+                Accepts BPMN 2.0 XML process files, or a SaaS process JSON export
               </p>
             </div>
 
@@ -149,7 +198,7 @@ export default function Home() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".bpmn,.xml"
+                accept=".bpmn,.xml,.json"
                 onChange={handleFileChange}
                 className="hidden"
                 id="file-upload"
@@ -161,17 +210,19 @@ export default function Home() {
                 Choose File
               </label>
 
-              <button
+              <motion.button
+                whileHover={{ scale: loading || !file ? 1 : 1.02 }}
+                whileTap={{ scale: loading || !file ? 1 : 0.98 }}
                 onClick={handleSubmit}
                 disabled={loading || !file}
                 className="px-5 py-2.5 rounded-lg text-sm font-medium text-white transition-colors inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ background: "var(--accent)" }}
+                style={{ background: "linear-gradient(135deg, var(--accent), var(--accent-2))" }}
               >
                 {loading && (
                   <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 )}
                 {loading ? "Processing" : "Redesign Process"}
-              </button>
+              </motion.button>
 
               {(file || result) && !loading && (
                 <button
@@ -183,207 +234,279 @@ export default function Home() {
               )}
             </div>
           </div>
-        </div>
+        </motion.div>
 
-        {error && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-            <p className="text-red-700 font-medium text-sm">Something went wrong</p>
-            <p className="text-red-600/80 text-sm mt-1">{error}</p>
-          </div>
-        )}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="rounded-2xl border border-red-200 bg-red-50 p-4 overflow-hidden"
+            >
+              <p className="text-red-700 font-medium text-sm">Something went wrong</p>
+              <p className="text-red-600/80 text-sm mt-1">{error}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {result && (
-          <div className="space-y-6">
-            <div
-              className="rounded-2xl p-7 border"
-              style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
-            >
-              <p className="font-mono text-xs uppercase tracking-widest text-gray-400 mb-5">
-                Redesign Impact
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                <DeltaRow
-                  label="Time"
-                  before={result.as_is.total_time_hours}
-                  after={result.to_be.total_time_hours}
-                  unit="h"
-                  pct={result.improvement.time_reduction_percent}
-                />
-                <DeltaRow
-                  label="Cost"
-                  before={result.as_is.total_cost_usd}
-                  after={result.to_be.total_cost_usd}
-                  unit="$"
-                  pct={result.improvement.cost_reduction_percent}
-                  prefixUnit
-                />
-              </div>
-            </div>
-
-            <div
-              className="rounded-2xl p-7 border"
-              style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <p
-                  className="font-mono text-xs uppercase tracking-widest px-2.5 py-1 rounded-md"
-                  style={{ color: "var(--baseline)", background: "var(--baseline-soft)" }}
-                >
-                  AS-IS
+          <div className="space-y-10 pt-2">
+            {/* Impact summary */}
+            <MotionSection>
+              <div
+                className="rounded-2xl p-7 border card-shadow"
+                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+              >
+                <p className="font-mono text-xs uppercase tracking-widest text-gray-400 mb-5">
+                  Redesign Impact
                 </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                  <DeltaRow
+                    label="Time"
+                    before={result.as_is.total_time_hours}
+                    after={result.to_be.total_time_hours}
+                    unit="h"
+                    pct={result.improvement.time_reduction_percent}
+                  />
+                  <DeltaRow
+                    label="Cost"
+                    before={result.as_is.total_cost_usd}
+                    after={result.to_be.total_cost_usd}
+                    unit="$"
+                    pct={result.improvement.cost_reduction_percent}
+                    prefixUnit
+                  />
+                </div>
               </div>
-              <BpmnDiagram xml={result.as_is_bpmn_xml} height={520} />
-            </div>
+            </MotionSection>
 
-            <div
-              className="rounded-2xl p-7 border"
-              style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <p
-                  className="font-mono text-xs uppercase tracking-widest px-2.5 py-1 rounded-md"
-                  style={{ color: "var(--good)", background: "var(--good-soft)" }}
+            {/* Cycle time analysis */}
+            {result.as_is_analysis && (
+              <MotionSection delay={0.05}>
+                <SectionHeading title="Cycle Time Analysis" subtitle="Cycle Time, Theoretical Cycle Time & Efficiency — Ch.7.1.1-7.1.2" />
+                <CycleTimeAnalysis asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
+              </MotionSection>
+            )}
+
+            {/* Critical path */}
+            {result.as_is_analysis && (
+              <MotionSection delay={0.05}>
+                <div
+                  className="rounded-2xl p-7 border card-shadow"
+                  style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
                 >
-                  TO-BE
-                </p>
-                <button
-                  onClick={handleDownloadToBe}
-                  className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-md font-medium"
+                  <SectionHeading title="Critical Path" subtitle="Forward/backward pass (ES, EF, LS, LF) along the dominant path — Ch.7.1.3" noMarginTop />
+                  <CriticalPathView asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
+                </div>
+              </MotionSection>
+            )}
+
+            {/* RACI matrix */}
+            {result.as_is_analysis && (
+              <MotionSection delay={0.05}>
+                <div
+                  className="rounded-2xl p-7 border card-shadow"
+                  style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
                 >
-                  Download BPMN
-                </button>
+                  <SectionHeading title="RACI Matrix" subtitle="Responsible / Accountable / Consulted / Informed, per task" noMarginTop />
+                  <RaciMatrix asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
+                </div>
+              </MotionSection>
+            )}
+
+            {/* Diagrams */}
+            <MotionSection delay={0.05}>
+              <div
+                className="rounded-2xl p-7 border card-shadow"
+                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <p
+                    className="font-mono text-xs uppercase tracking-widest px-2.5 py-1 rounded-md"
+                    style={{ color: "var(--baseline)", background: "var(--baseline-soft)" }}
+                  >
+                    AS-IS
+                  </p>
+                </div>
+                <BpmnDiagram xml={result.as_is_bpmn_xml} height={520} />
               </div>
-              <BpmnDiagram xml={result.to_be_bpmn_xml} height={520} />
-            </div>
+            </MotionSection>
 
-            <div
-              className="rounded-2xl p-7 border overflow-x-auto"
-              style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
-            >
-              <p className="font-mono text-xs uppercase tracking-widest text-gray-400 mb-5">
-                Redesign Trace
-              </p>
+            <MotionSection delay={0.05}>
+              <div
+                className="rounded-2xl p-7 border card-shadow"
+                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <p
+                    className="font-mono text-xs uppercase tracking-widest px-2.5 py-1 rounded-md"
+                    style={{ color: "var(--good)", background: "var(--good-soft)" }}
+                  >
+                    TO-BE
+                  </p>
+                  <button
+                    onClick={handleDownloadToBe}
+                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-md font-medium transition-colors"
+                  >
+                    Download BPMN
+                  </button>
+                </div>
+                <BpmnDiagram xml={result.to_be_bpmn_xml} height={520} />
+              </div>
+            </MotionSection>
 
-              <table className="w-full border-collapse min-w-[760px]">
-                <thead>
-                  <tr style={{ borderBottom: "1px solid var(--panel-border)" }}>
-                    <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4 w-10">
-                      #
-                    </th>
-                    <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
-                      Action
-                    </th>
-                    <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
-                      Applied To
-                    </th>
-                    <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
-                      Time
-                    </th>
-                    <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
-                      Cost
-                    </th>
-                    <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 w-16">
-                      Why
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.redesign_trace.map((step, idx) => (
-                    <Fragment key={step.step}>
-                      <tr
-                        style={{
-                          borderBottom:
-                            expandedStep === step.step
-                              ? "none"
-                              : idx !== result.redesign_trace.length - 1
-                                ? "1px solid var(--panel-border)"
-                                : "none",
-                        }}
-                      >
-                        <td className="py-3.5 pr-4 font-mono text-xs text-gray-300 align-top">
-                          {String(step.step).padStart(2, "0")}
-                        </td>
-                        <td className="py-3.5 pr-4 align-top">
-                          <span
-                            className="inline-block text-xs font-medium px-2.5 py-1 rounded-md"
-                            style={{ color: "var(--accent)", background: "var(--accent-soft)" }}
-                          >
-                            {step.heuristic}
-                          </span>
-                        </td>
-                        <td className="py-3.5 pr-4 text-sm text-gray-700 align-top">
-                          {step.applied_to}
-                        </td>
-                        <td className="py-3.5 pr-4 text-right align-top">
-                          <div className="font-mono text-sm text-gray-900">
-                            {step.time_before}h → {step.time_after}h
-                          </div>
-                          {step.time_delta_pct > 0 && (
-                            <div className="text-xs font-mono" style={{ color: "var(--good)" }}>
-                              −{step.time_delta_pct}%
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3.5 pr-4 text-right align-top">
-                          <div className="font-mono text-sm text-gray-900">
-                            ${step.cost_before} → ${step.cost_after}
-                          </div>
-                          {step.cost_delta_pct !== 0 && (
-                            <div
-                              className="text-xs font-mono"
-                              style={{ color: step.cost_delta_pct > 0 ? "var(--good)" : "var(--baseline)" }}
-                            >
-                              {step.cost_delta_pct > 0 ? "−" : "+"}
-                              {Math.abs(step.cost_delta_pct)}%
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3.5 text-right align-top">
-                          <button
-                            onClick={() => toggleStep(step.step)}
-                            className="text-xs font-medium px-2.5 py-1 rounded-md hover:bg-gray-100 transition-colors"
-                            style={{ color: "var(--accent)" }}
-                          >
-                            {expandedStep === step.step ? "Hide" : "Show"}
-                          </button>
-                        </td>
-                      </tr>
-                      {expandedStep === step.step && (
-                        <tr
+            {/* Redesign trace */}
+            <MotionSection delay={0.05}>
+              <div
+                className="rounded-2xl p-7 border overflow-x-auto card-shadow"
+                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+              >
+                <SectionHeading title="Redesign Trace" subtitle="Each heuristic the agent applied, in order" noMarginTop />
+
+                <table className="w-full border-collapse min-w-[760px] mt-2">
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--panel-border)" }}>
+                      <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4 w-10">
+                        #
+                      </th>
+                      <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
+                        Action
+                      </th>
+                      <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
+                        Applied To
+                      </th>
+                      <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
+                        Time
+                      </th>
+                      <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
+                        Cost
+                      </th>
+                      <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 w-16">
+                        Why
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.redesign_trace.map((step, idx) => (
+                      <Fragment key={step.step}>
+                        <motion.tr
+                          initial={{ opacity: 0 }}
+                          whileInView={{ opacity: 1 }}
+                          viewport={{ once: true }}
+                          transition={{ duration: 0.3, delay: idx * 0.05 }}
                           style={{
                             borderBottom:
-                              idx !== result.redesign_trace.length - 1
-                                ? "1px solid var(--panel-border)"
-                                : "none",
+                              expandedStep === step.step
+                                ? "none"
+                                : idx !== result.redesign_trace.length - 1
+                                  ? "1px solid var(--panel-border)"
+                                  : "none",
                           }}
                         >
-                          <td></td>
-                          <td colSpan={5} className="pb-4 pr-4">
-                            <div
-                              className="text-sm text-gray-600 leading-relaxed p-4 rounded-lg"
-                              style={{ background: "var(--accent-soft)" }}
-                            >
-                              {step.reason}
-                            </div>
+                          <td className="py-3.5 pr-4 font-mono text-xs text-gray-300 align-top">
+                            {String(step.step).padStart(2, "0")}
                           </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
+                          <td className="py-3.5 pr-4 align-top">
+                            <span
+                              className="inline-block text-xs font-medium px-2.5 py-1 rounded-md"
+                              style={{ color: "var(--accent)", background: "var(--accent-soft)" }}
+                            >
+                              {step.heuristic}
+                            </span>
+                          </td>
+                          <td className="py-3.5 pr-4 text-sm text-gray-700 align-top">
+                            {step.applied_to}
+                          </td>
+                          <td className="py-3.5 pr-4 text-right align-top">
+                            <div className="font-mono text-sm text-gray-900">
+                              {step.time_before}h → {step.time_after}h
+                            </div>
+                            {step.time_delta_pct !== 0 && (
+                              <div
+                                className="text-xs font-mono"
+                                style={{ color: step.time_delta_pct > 0 ? "var(--good)" : "var(--critical)" }}
+                              >
+                                {step.time_delta_pct > 0 ? "−" : "+"}
+                                {Math.abs(step.time_delta_pct)}%
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3.5 pr-4 text-right align-top">
+                            <div className="font-mono text-sm text-gray-900">
+                              ${step.cost_before} → ${step.cost_after}
+                            </div>
+                            {step.cost_delta_pct !== 0 && (
+                              <div
+                                className="text-xs font-mono"
+                                style={{ color: step.cost_delta_pct > 0 ? "var(--good)" : "var(--critical)" }}
+                              >
+                                {step.cost_delta_pct > 0 ? "−" : "+"}
+                                {Math.abs(step.cost_delta_pct)}%
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3.5 text-right align-top">
+                            <button
+                              onClick={() => toggleStep(step.step)}
+                              className="text-xs font-medium px-2.5 py-1 rounded-md hover:bg-gray-100 transition-colors"
+                              style={{ color: "var(--accent)" }}
+                            >
+                              {expandedStep === step.step ? "Hide" : "Show"}
+                            </button>
+                          </td>
+                        </motion.tr>
+                        <AnimatePresence>
+                          {expandedStep === step.step && (
+                            <motion.tr
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              style={{
+                                borderBottom:
+                                  idx !== result.redesign_trace.length - 1
+                                    ? "1px solid var(--panel-border)"
+                                    : "none",
+                              }}
+                            >
+                              <td></td>
+                              <td colSpan={5} className="pb-4 pr-4">
+                                <div
+                                  className="text-sm text-gray-600 leading-relaxed p-4 rounded-lg"
+                                  style={{ background: "var(--accent-soft)" }}
+                                >
+                                  {step.reason}
+                                </div>
+                              </td>
+                            </motion.tr>
+                          )}
+                        </AnimatePresence>
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
 
-              <p
-                className="text-xs text-gray-400 mt-5 pt-4 italic"
-                style={{ borderTop: "1px solid var(--panel-border)" }}
-              >
-                {result.stopping_reason}
-              </p>
-            </div>
+                <p
+                  className="text-xs text-gray-400 mt-5 pt-4 italic"
+                  style={{ borderTop: "1px solid var(--panel-border)" }}
+                >
+                  {result.stopping_reason}
+                </p>
+              </div>
+            </MotionSection>
           </div>
         )}
       </div>
     </main>
+  );
+}
+
+function SectionHeading({ title, subtitle, noMarginTop }) {
+  return (
+    <div className={noMarginTop ? "mb-5" : "mb-5 mt-1"}>
+      <h2 className="font-display text-lg font-semibold text-gray-900">{title}</h2>
+      {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
+    </div>
   );
 }
 

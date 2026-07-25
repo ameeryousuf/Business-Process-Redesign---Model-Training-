@@ -1,10 +1,11 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Body
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import os
 import uuid
 
-from app.inference import load_q_table, redesign_process
+from app.inference import load_q_table, redesign_process, redesign_target_process
+from app.target_schema_parser import SubprocessNotFoundError, CircularSubprocessError
 
 app = FastAPI()
 
@@ -18,8 +19,15 @@ app.add_middleware(
 
 q_table = load_q_table()
 
+TARGET_SCHEMA_MODEL_PATH = "data/trained_q_table_target_schema.pkl"
+target_schema_q_table = (
+    load_q_table(TARGET_SCHEMA_MODEL_PATH) if os.path.exists(TARGET_SCHEMA_MODEL_PATH) else None
+)
+
 UPLOAD_DIR = "data/uploads"
+PROCESSES_DIR = "data/processes"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(PROCESSES_DIR, exist_ok=True)
 
 
 @app.get("/")
@@ -43,3 +51,23 @@ async def redesign(file: UploadFile = File(...)):
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+@app.post("/redesign/process")
+async def redesign_process_json(data: dict = Body(...)):
+    """Accepts a process in the SaaS's own relational JSON schema (the same shape as
+    processes/<id>.json) and returns the as-is/to-be comparison + redesign trace.
+    Any child_process_id reference is resolved by looking up <PROCESSES_DIR>/<id>.json.
+    """
+    if target_schema_q_table is None:
+        return {"error": "Target-schema model is not trained yet (missing trained_q_table_target_schema.pkl)."}
+
+    try:
+        result = redesign_target_process(data, PROCESSES_DIR, target_schema_q_table)
+        return result
+    except SubprocessNotFoundError as e:
+        return {"error": str(e)}
+    except CircularSubprocessError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": str(e)}

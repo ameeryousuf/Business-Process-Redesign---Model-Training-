@@ -292,7 +292,7 @@ def parsed_to_bpmn_xml(parsed, process_id="Process_1", include_metrics=False):
 
     for gateway in parsed.gateways:
         gw_type = gateway.get("type", "exclusive")
-        tag = "parallelGateway" if gw_type == "parallel" else "exclusiveGateway"
+        tag = {"parallel": "parallelGateway", "inclusive": "inclusiveGateway"}.get(gw_type, "exclusiveGateway")
         ET.SubElement(process, f"{{{BPMN_NS}}}{tag}", {
             "id": gateway["id"],
             "name": gateway.get("name") or ""

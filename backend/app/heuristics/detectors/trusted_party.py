@@ -1,5 +1,5 @@
 def detect_trusted_party(parsed, ratio_threshold=1.5):
-    tasks = [t for t in parsed.tasks if t["duration"] > 0]
+    tasks = [t for t in parsed.tasks if t["duration"] > 0 and not t.get("is_subprocess")]
 
     if not tasks:
         return {"eligible": False, "candidates": []}

@@ -8,16 +8,18 @@ IMPLAUSIBLE_REWARD_THRESHOLD = -0.02
 
 
 class ProcessRedesignEnv:
-    def __init__(self, bpmn_path, time_low=5, time_high=10, cost_low=50, cost_high=100, max_steps=10):
+    def __init__(self, bpmn_path, time_low=5, time_high=10, cost_low=50, cost_high=100, max_steps=10,
+                 parser_fn=None):
         self.bpmn_path = bpmn_path
         self.time_low = time_low
         self.time_high = time_high
         self.cost_low = cost_low
         self.cost_high = cost_high
         self.max_steps = max_steps
+        self.parser_fn = parser_fn or parse_bpmn
 
     def reset(self):
-        self.parsed = parse_bpmn(self.bpmn_path)
+        self.parsed = self.parser_fn(self.bpmn_path)
         self.step_count = 0
         self.baseline_metrics = calculate_metrics(self.parsed)
         return self._get_state()
@@ -60,6 +62,15 @@ class ProcessRedesignEnv:
         if new_parsed is None:
             done = self.step_count >= self.max_steps
             return self._get_state(), -1.0, done, {"reason": "execution_failed"}
+
+        # Heuristic executors only mutate `duration` (they predate the target schema's
+        # finer process/waiting/rework breakdown). processing_time can never legitimately
+        # exceed total duration, so clamp it down whenever an executor reduces duration
+        # below the stored processing_time -- keeps Theoretical Cycle Time structurally
+        # valid even though it can't track the true waiting-vs-processing split per heuristic.
+        for task in new_parsed.tasks:
+            if "processing_time" in task:
+                task["processing_time"] = min(task["processing_time"], task["duration"])
 
         old_metrics = self.current_metrics
         new_metrics = calculate_metrics(new_parsed)

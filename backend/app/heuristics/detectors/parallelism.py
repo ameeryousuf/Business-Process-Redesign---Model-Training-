@@ -34,6 +34,9 @@ def detect_parallelism(parsed):
         if source_task.get("parallel_group") or target_task.get("parallel_group"):
             continue
 
+        if source_task.get("is_subprocess") or target_task.get("is_subprocess"):
+            continue
+
         if source_task["resource"] != target_task["resource"]:
             candidates.append({
                 "task_a": source_id,

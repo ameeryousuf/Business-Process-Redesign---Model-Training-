@@ -6,12 +6,22 @@ def apply_resequencing(parsed, expensive_task_id, cheaper_task_id):
 
     flows = new_parsed.flows
 
-    incoming_to_expensive = next((f for f in flows if f["target"] == expensive_task_id), None)
-    middle_flow = next((f for f in flows if f["source"] == expensive_task_id and f["target"] == cheaper_task_id), None)
-    outgoing_from_cheaper = next((f for f in flows if f["source"] == cheaper_task_id), None)
+    incoming_flows = [f for f in flows if f["target"] == expensive_task_id]
+    middle_flows = [f for f in flows if f["source"] == expensive_task_id and f["target"] == cheaper_task_id]
+    outgoing_flows = [f for f in flows if f["source"] == cheaper_task_id]
 
-    if incoming_to_expensive is None or middle_flow is None or outgoing_from_cheaper is None:
+    # The detector only verifies expensive_task's outgoing count and
+    # cheaper_task's incoming count. It never checks expensive_task's
+    # incoming edges or cheaper_task's outgoing edges. The swap below
+    # assumes exactly one of each boundary flow; if that assumption
+    # doesn't hold, next() would silently pick one and drop the rest,
+    # so reject the candidate instead of dropping edges silently.
+    if len(incoming_flows) != 1 or len(middle_flows) != 1 or len(outgoing_flows) != 1:
         return None
+
+    incoming_to_expensive = incoming_flows[0]
+    middle_flow = middle_flows[0]
+    outgoing_from_cheaper = outgoing_flows[0]
 
     flows.remove(incoming_to_expensive)
     flows.remove(middle_flow)

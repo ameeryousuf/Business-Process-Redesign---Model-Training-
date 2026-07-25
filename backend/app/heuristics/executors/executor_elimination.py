@@ -6,11 +6,19 @@ def apply_elimination(parsed, task_id):
 
     flows = new_parsed.flows
 
-    incoming_flow = next((f for f in flows if f["target"] == task_id), None)
-    outgoing_flow = next((f for f in flows if f["source"] == task_id), None)
+    incoming_flows = [f for f in flows if f["target"] == task_id]
+    outgoing_flows = [f for f in flows if f["source"] == task_id]
 
-    if incoming_flow is None or outgoing_flow is None:
+    # The splice-out rewiring below only knows how to reconnect a single
+    # predecessor to a single successor. If the task has more than one
+    # incoming or outgoing flow, removing it would leave the extra edges
+    # dangling (pointing at a task_id that no longer exists), so reject
+    # the candidate instead of silently corrupting the graph.
+    if len(incoming_flows) != 1 or len(outgoing_flows) != 1:
         return None
+
+    incoming_flow = incoming_flows[0]
+    outgoing_flow = outgoing_flows[0]
 
     new_parsed.tasks = [t for t in new_parsed.tasks if t["id"] != task_id]
 

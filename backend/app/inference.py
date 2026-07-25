@@ -4,11 +4,12 @@ import pickle
 from app.bpmn_parser import parse_bpmn
 from app.translator import translate_names
 from app.synthetic_metrics import enrich_process
-from app.metrics_calculator import calculate_metrics
+from app.metrics_calculator import calculate_metrics, calculate_theoretical_metrics, calculate_cycle_time_efficiency
 from app.state_builder import build_state, HEURISTIC_ORDER
 from app.environment import ProcessRedesignEnv
 from app.bpmn_writer import parsed_to_bpmn_xml
 from app.heuristics.registry import HEURISTIC_LABELS
+from app.critical_path import compute_critical_path
 
 MODEL_PATH = "data/trained_q_table.pkl"
 MIN_IMPROVEMENT_THRESHOLD = 0.02
@@ -18,6 +19,35 @@ def _already_has_baked_metrics(parsed):
     if not parsed.tasks:
         return False
     return all(t.get("resource") for t in parsed.tasks)
+
+
+def _analysis_snapshot(parsed):
+    """Cycle Time, Theoretical Cycle Time, Cycle Time Efficiency (Ch.7.1.1-7.1.2),
+    the Critical Path (Ch.7.1.3), and the RACI matrix for the process's current state.
+    """
+    metrics = calculate_metrics(parsed)
+    theoretical = calculate_theoretical_metrics(parsed)
+    cte = calculate_cycle_time_efficiency(metrics["total_time_hours"], theoretical["theoretical_time_hours"])
+    critical_path = compute_critical_path(parsed)
+
+    raci_matrix = [
+        {
+            "task_id": t["id"],
+            "name": t.get("name") or t["id"],
+            "is_subprocess": bool(t.get("is_subprocess")),
+            "assignments": t.get("raci") or []
+        }
+        for t in parsed.tasks
+    ]
+
+    return {
+        "cycle_time_hours": metrics["total_time_hours"],
+        "theoretical_cycle_time_hours": theoretical["theoretical_time_hours"],
+        "cycle_time_efficiency": cte,
+        "critical_path": critical_path["critical_path"],
+        "critical_path_hours": critical_path["critical_path_hours"],
+        "raci_matrix": raci_matrix
+    }
 
 
 def _describe_target(action, candidates, parsed):
@@ -185,22 +215,10 @@ def pick_best_action(q_table, state, eligible_actions):
     return best[0]
 
 
-def redesign_process(bpmn_path, q_table, max_steps=10,
-                      time_low=5, time_high=20, cost_low=50, cost_high=200,
-                      min_improvement_threshold=MIN_IMPROVEMENT_THRESHOLD):
-
-    parsed = parse_bpmn(bpmn_path)
-
-    if _already_has_baked_metrics(parsed):
-        enriched = parsed
-    else:
-        parsed = translate_names(parsed)
-        enriched = enrich_process(parsed, seed=DEFAULT_SEED)
-
+def _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold):
     as_is_xml = parsed_to_bpmn_xml(enriched, process_id="Process_AsIs")
+    as_is_analysis = _analysis_snapshot(enriched)
 
-    env = ProcessRedesignEnv(bpmn_path, time_low=time_low, time_high=time_high,
-                              cost_low=cost_low, cost_high=cost_high, max_steps=max_steps)
     env.parsed = enriched
     env.step_count = 0
     env.baseline_metrics = calculate_metrics(enriched)
@@ -223,33 +241,45 @@ def redesign_process(bpmn_path, q_table, max_steps=10,
             stopping_reason = "Reached maximum step limit."
             break
 
-        action = pick_best_action(q_table, state, eligible_actions)
+        remaining_candidates = list(eligible_actions)
+        applied = False
+        best_below_threshold = None
 
-        if action is None:
-            stopping_reason = "No further eligible heuristics improved the process."
-            break
+        # Try actions best-Q-first; if the top pick doesn't clear the improvement
+        # threshold (or fails to apply), fall through to the next-best eligible
+        # action instead of giving up on the whole process.
+        while remaining_candidates:
+            action = pick_best_action(q_table, state, remaining_candidates)
+            if action is None:
+                break
 
-        pre_step_parsed = copy.deepcopy(env.parsed)
-        pre_step_count = env.step_count
-        metrics_before = env.current_metrics
-        candidates_before = env.current_details[action]
-        target_description = _describe_target(action, candidates_before, pre_step_parsed)
-        reasoning = _generate_reasoning(action, candidates_before, pre_step_parsed)
+            pre_step_parsed = copy.deepcopy(env.parsed)
+            pre_step_count = env.step_count
+            metrics_before = env.current_metrics
+            candidates_before = env.current_details[action]
+            target_description = _describe_target(action, candidates_before, pre_step_parsed)
+            reasoning = _generate_reasoning(action, candidates_before, pre_step_parsed)
 
-        next_state, reward, done, info = env.step(action)
+            next_state, reward, done, info = env.step(action)
 
-        if info["reason"] != "applied":
+            if info["reason"] == "applied" and reward >= min_improvement_threshold:
+                applied = True
+                break
+
+            if info["reason"] == "applied" and best_below_threshold is None:
+                best_below_threshold = reward
+
             env.parsed = pre_step_parsed
             env.step_count = pre_step_count
             state = env._get_state()
-            stopping_reason = "No further eligible heuristics improved the process."
-            break
+            remaining_candidates.remove(action)
 
-        if reward < min_improvement_threshold:
-            env.parsed = pre_step_parsed
-            env.step_count = pre_step_count
-            state = env._get_state()
-            stopping_reason = "Remaining improvements were too small to be worth applying."
+        if not applied:
+            stopping_reason = (
+                "Remaining improvements were too small to be worth applying."
+                if best_below_threshold is not None
+                else "No further eligible heuristics improved the process."
+            )
             break
 
         step_num += 1
@@ -287,6 +317,7 @@ def redesign_process(bpmn_path, q_table, max_steps=10,
 
     to_be_metrics = env.current_metrics
     to_be_xml = parsed_to_bpmn_xml(env.parsed, process_id="Process_ToBe")
+    to_be_analysis = _analysis_snapshot(env.parsed)
 
     time_reduction_pct = 0.0
     cost_reduction_pct = 0.0
@@ -311,8 +342,50 @@ def redesign_process(bpmn_path, q_table, max_steps=10,
         "redesign_trace": trace,
         "stopping_reason": stopping_reason,
         "as_is_bpmn_xml": as_is_xml,
-        "to_be_bpmn_xml": to_be_xml
+        "to_be_bpmn_xml": to_be_xml,
+        "as_is_analysis": as_is_analysis,
+        "to_be_analysis": to_be_analysis
     }
+
+
+def redesign_process(bpmn_path, q_table, max_steps=10,
+                      time_low=5, time_high=20, cost_low=50, cost_high=200,
+                      min_improvement_threshold=MIN_IMPROVEMENT_THRESHOLD):
+
+    parsed = parse_bpmn(bpmn_path)
+
+    if _already_has_baked_metrics(parsed):
+        enriched = parsed
+    else:
+        parsed = translate_names(parsed)
+        enriched = enrich_process(parsed, seed=DEFAULT_SEED)
+
+    env = ProcessRedesignEnv(bpmn_path, time_low=time_low, time_high=time_high,
+                              cost_low=cost_low, cost_high=cost_high, max_steps=max_steps)
+
+    return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold)
+
+
+def redesign_target_process(data, processes_dir, q_table, max_steps=10,
+                             time_low=5, time_high=20, cost_low=50, cost_high=200,
+                             min_improvement_threshold=MIN_IMPROVEMENT_THRESHOLD):
+    """Same redesign pipeline as `redesign_process`, but for a process already in the
+    SaaS's relational JSON schema. No translation/synthetic enrichment is applied --
+    the schema's own real duration/cost/probability/value_classification data is used
+    as-is (see app/target_schema_parser.py).
+    """
+    from app.target_schema_parser import parse_target_process
+
+    enriched = parse_target_process(data, processes_dir)
+
+    def _parser_fn(_):
+        return parse_target_process(data, processes_dir)
+
+    env = ProcessRedesignEnv(None, time_low=time_low, time_high=time_high,
+                              cost_low=cost_low, cost_high=cost_high, max_steps=max_steps,
+                              parser_fn=_parser_fn)
+
+    return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold)
 
 
 if __name__ == "__main__":

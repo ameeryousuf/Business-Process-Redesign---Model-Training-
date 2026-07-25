@@ -1,22 +1,35 @@
 @import "tailwindcss";
 
 :root {
-  --page-bg: #fafafa;
+  --page-bg: #f6f7fb;
   --panel-bg: #ffffff;
-  --panel-border: #e5e7eb;
-  --text-primary: #111827;
+  --panel-border: #e7e9f0;
+  --text-primary: #0f1222;
   --text-muted: #6b7280;
   --text-faint: #9ca3af;
   --accent: #4f46e5;
+  --accent-2: #7c3aed;
   --accent-soft: #eef2ff;
   --good: #059669;
   --good-soft: #ecfdf5;
   --baseline: #d97706;
   --baseline-soft: #fffbeb;
+  --critical: #dc2626;
+  --critical-soft: #fef2f2;
+  --slack: #2563eb;
+  --slack-soft: #eff6ff;
+  --raci-r: #4f46e5;
+  --raci-a: #dc2626;
+  --raci-c: #d97706;
+  --raci-i: #6b7280;
+  --card-shadow: 0 1px 2px rgba(15, 18, 34, 0.04), 0 8px 24px -12px rgba(15, 18, 34, 0.08);
 }
 
 body {
-  background: var(--page-bg);
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(79, 70, 229, 0.07), transparent),
+    radial-gradient(900px 500px at 100% 0%, rgba(124, 58, 237, 0.06), transparent),
+    var(--page-bg);
   font-family: var(--font-body), sans-serif;
   color: var(--text-primary);
 }
@@ -27,4 +40,15 @@ body {
 
 .font-mono {
   font-family: var(--font-mono), monospace;
+}
+
+.card-shadow {
+  box-shadow: var(--card-shadow);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }

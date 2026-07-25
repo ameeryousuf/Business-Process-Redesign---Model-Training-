@@ -5,6 +5,9 @@ def detect_automation(parsed):
     candidates = []
 
     for task in parsed.tasks:
+        if task.get("is_subprocess"):
+            continue
+
         resource = task["resource"]
         name = (task["name"] or "").lower()
 

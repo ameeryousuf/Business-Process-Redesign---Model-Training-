@@ -1,5 +1,5 @@
 def detect_case_based_work(parsed, ratio_threshold=1.5):
-    task_ids = {t["id"] for t in parsed.tasks}
+    task_ids = {t["id"] for t in parsed.tasks if not t.get("is_subprocess")}
     task_lookup = {t["id"]: t for t in parsed.tasks}
 
     graph = {}
@@ -10,6 +10,10 @@ def detect_case_based_work(parsed, ratio_threshold=1.5):
 
     for gateway in parsed.gateways:
         gw_id = gateway["id"]
+
+        if gateway.get("case_based_work_applied"):
+            continue
+
         outgoing = graph.get(gw_id, [])
         task_targets = [f for f in outgoing if f["target"] in task_ids]
 

@@ -6,6 +6,14 @@ CASE_TIME_REDUCTION_RATIO = 0.85
 def apply_case_based_work(parsed, gateway_id):
     new_parsed = copy.deepcopy(parsed)
 
+    gateway_lookup = {g["id"]: g for g in new_parsed.gateways}
+    gateway = gateway_lookup.get(gateway_id)
+
+    # Guard against re-selecting the same gateway on a later pass (reward
+    # farming): once applied, mark it so the detector skips it next time.
+    if gateway is None or gateway.get("case_based_work_applied"):
+        return None
+
     task_lookup = {t["id"]: t for t in new_parsed.tasks}
 
     graph = {}
@@ -19,6 +27,9 @@ def apply_case_based_work(parsed, gateway_id):
     for target_id in branch_targets:
         task = task_lookup[target_id]
         task["duration"] = round(task["duration"] * CASE_TIME_REDUCTION_RATIO, 2)
+        task["cost"] = round(task["cost"] * CASE_TIME_REDUCTION_RATIO, 2)
+
+    gateway["case_based_work_applied"] = True
 
     return new_parsed
 
