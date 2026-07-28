@@ -67,13 +67,10 @@ export default function Home() {
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
 
-    const validExtensions = [".bpmn", ".xml", ".json"];
-    const isValid = validExtensions.some((ext) =>
-      selectedFile.name.toLowerCase().endsWith(ext)
-    );
+    const isValid = selectedFile.name.toLowerCase().endsWith(".json");
 
     if (!isValid) {
-      setError("Please upload a .bpmn, .xml, or .json (SaaS process export) file.");
+      setError("Please upload a .json (SaaS process export) file.");
       return;
     }
 
@@ -100,40 +97,26 @@ export default function Home() {
 
   const handleSubmit = async () => {
     if (!file) {
-      setError("Please select a .bpmn file first.");
+      setError("Please select a .json file first.");
       return;
     }
 
     setLoading(true);
     setError(null);
 
-    const isJson = file.name.toLowerCase().endsWith(".json");
-
     try {
-      let response;
-
-      if (isJson) {
-        let processData;
-        try {
-          processData = JSON.parse(await file.text());
-        } catch (parseErr) {
-          throw new Error("Could not parse this file as JSON. Is it a valid SaaS process export?");
-        }
-
-        response = await fetch("http://127.0.0.1:8000/redesign/process", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(processData),
-        });
-      } else {
-        const formData = new FormData();
-        formData.append("file", file);
-
-        response = await fetch("http://127.0.0.1:8000/redesign", {
-          method: "POST",
-          body: formData,
-        });
+      let processData;
+      try {
+        processData = JSON.parse(await file.text());
+      } catch (parseErr) {
+        throw new Error("Could not parse this file as JSON. Is it a valid SaaS process export?");
       }
+
+      const response = await fetch("http://127.0.0.1:8000/redesign/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(processData),
+      });
 
       if (!response.ok) {
         throw new Error(`Server responded with status ${response.status}. Is the backend running?`);
@@ -469,9 +452,9 @@ export default function Home() {
             transition={{ duration: 0.6, delay: 0.12 }}
             className="mt-5 max-w-2xl text-gray-500 text-base md:text-lg"
           >
-            Upload a process — BPMN 2.0 or a SaaS process export — and get a quantitative,
-            literature-grounded redesign: cycle time, theoretical cycle time, cycle time
-            efficiency, critical path, and RACI, before and after.
+            Upload a SaaS process export and get a quantitative, literature-grounded redesign:
+            cycle time, theoretical cycle time, cycle time efficiency, critical path, and RACI,
+            before and after.
           </motion.p>
         </div>
       </div>
@@ -512,10 +495,10 @@ export default function Home() {
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="text-center md:text-left">
               <p className="font-medium text-gray-900">
-                {file ? file.name : "Drop a .bpmn or SaaS process .json file here, or browse to select one"}
+                {file ? file.name : "Drop a SaaS process .json file here, or browse to select one"}
               </p>
               <p className="text-gray-400 text-sm mt-1">
-                Accepts BPMN 2.0 XML process files, or a SaaS process JSON export
+                Accepts a SaaS process JSON export
               </p>
             </div>
 
@@ -523,7 +506,7 @@ export default function Home() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".bpmn,.xml,.json"
+                accept=".json"
                 onChange={handleFileChange}
                 className="hidden"
                 id="file-upload"

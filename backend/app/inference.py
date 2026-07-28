@@ -1,9 +1,6 @@
 import copy
 import pickle
 
-from app.bpmn_parser import parse_bpmn
-from app.translator import translate_names
-from app.synthetic_metrics import enrich_process
 from app.metrics_calculator import calculate_metrics, calculate_theoretical_metrics, calculate_cycle_time_efficiency
 from app.state_builder import build_state, HEURISTIC_ORDER
 from app.environment import ProcessRedesignEnv, IMPLAUSIBLE_REWARD_THRESHOLD
@@ -11,9 +8,7 @@ from app.bpmn_writer import parsed_to_bpmn_xml
 from app.heuristics.registry import HEURISTIC_LABELS
 from app.critical_path import compute_critical_path
 
-MODEL_PATH = "data/trained_q_table.pkl"
 MIN_IMPROVEMENT_THRESHOLD = 0.02
-DEFAULT_SEED = 42
 
 RL_HYPERPARAMETERS = {
     "learning_rate_alpha": 0.1,
@@ -51,12 +46,6 @@ def _describe_state(state):
         HEURISTIC_LABELS[name] for name, bit in zip(HEURISTIC_ORDER, eligibility_bits) if bit
     ]
     return {"time_bucket": time_bucket, "cost_bucket": cost_bucket, "eligible_heuristics": eligible}
-
-def _already_has_baked_metrics(parsed):
-    if not parsed.tasks:
-        return False
-    return all(t.get("resource") for t in parsed.tasks)
-
 
 def _analysis_snapshot(parsed):
     metrics = calculate_metrics(parsed)
@@ -260,7 +249,7 @@ def _generate_reasoning(action, candidates, parsed):
     return "This action was identified as beneficial based on the process's current structure."
 
 
-def load_q_table(path=MODEL_PATH):
+def load_q_table(path):
     with open(path, "rb") as f:
         return pickle.load(f)
 
@@ -441,25 +430,6 @@ def _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold, 
     }
 
 
-def redesign_process(bpmn_path, q_table, max_steps=10,
-                      time_low=5, time_high=20, cost_low=50, cost_high=200,
-                      min_improvement_threshold=MIN_IMPROVEMENT_THRESHOLD):
-
-    parsed = parse_bpmn(bpmn_path)
-
-    if _already_has_baked_metrics(parsed):
-        enriched = parsed
-    else:
-        parsed = translate_names(parsed)
-        enriched = enrich_process(parsed, seed=DEFAULT_SEED)
-
-    env = ProcessRedesignEnv(bpmn_path, time_low=time_low, time_high=time_high,
-                              cost_low=cost_low, cost_high=cost_high, max_steps=max_steps)
-
-    return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold,
-                          currency_code="generic_units")
-
-
 def redesign_target_process(data, processes_dir, q_table, max_steps=10,
                              time_low=5, time_high=20, cost_low=50, cost_high=200,
                              min_improvement_threshold=MIN_IMPROVEMENT_THRESHOLD):
@@ -476,17 +446,3 @@ def redesign_target_process(data, processes_dir, q_table, max_steps=10,
 
     return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold,
                           currency_code="USD")
-
-
-if __name__ == "__main__":
-    q_table = load_q_table()
-
-    result = redesign_process("data/eval_final/eval_0001.bpmn", q_table)
-
-    print("AS-IS:", result["as_is"])
-    print("TO-BE:", result["to_be"])
-    print("Improvement:", result["improvement"])
-    print("Stopping reason:", result["stopping_reason"])
-    print("\nRedesign Trace:")
-    for step in result["redesign_trace"]:
-        print(f"  Step {step['step']}: {step['heuristic']} on {step['applied_to']} | Time {step['time_before']}→{step['time_after']} ({step['time_delta_pct']}%) | Cost {step['cost_before']}→{step['cost_after']} ({step['cost_delta_pct']}%)")

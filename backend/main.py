@@ -1,10 +1,8 @@
-from fastapi import FastAPI, UploadFile, File, Body
+from fastapi import FastAPI, Body
 from fastapi.middleware.cors import CORSMiddleware
-import shutil
 import os
-import uuid
 
-from app.inference import load_q_table, redesign_process, redesign_target_process
+from app.inference import load_q_table, redesign_target_process
 from app.target_schema_parser import SubprocessNotFoundError, CircularSubprocessError
 
 app = FastAPI()
@@ -17,40 +15,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-q_table = load_q_table()
-
 TARGET_SCHEMA_MODEL_PATH = "data/trained_q_table_target_schema.pkl"
 target_schema_q_table = (
     load_q_table(TARGET_SCHEMA_MODEL_PATH) if os.path.exists(TARGET_SCHEMA_MODEL_PATH) else None
 )
 
-UPLOAD_DIR = "data/uploads"
 PROCESSES_DIR = "data/processes"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(PROCESSES_DIR, exist_ok=True)
 
 
 @app.get("/")
 def read_root():
     return {"message": "BPM Redesign Engine is running"}
-
-
-@app.post("/redesign")
-async def redesign(file: UploadFile = File(...)):
-    temp_filename = f"{uuid.uuid4()}.bpmn"
-    temp_path = os.path.join(UPLOAD_DIR, temp_filename)
-
-    with open(temp_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    try:
-        result = redesign_process(temp_path, q_table)
-        return result
-    except Exception as e:
-        return {"error": str(e)}
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
 
 
 @app.post("/redesign/process")

@@ -8,9 +8,8 @@ from app.environment import ProcessRedesignEnv
 from app.q_learning_agent import QLearningAgent
 from app.state_builder import HEURISTIC_ORDER
 
-DATASET_DIR = "data/training_final"
+DATASET_DIR = "data/target_training"
 NUM_EPISODES = 5000
-MODEL_OUTPUT_PATH = "data/trained_q_table.pkl"
 
 
 def load_process_files(dataset_dir=DATASET_DIR, file_pattern="*.bpmn"):
@@ -68,11 +67,3 @@ def save_agent(agent, path):
     with open(path, "wb") as f:
         pickle.dump(agent.q_table, f)
     print(f"\nQ-table saved to {path}")
-
-
-if __name__ == "__main__":
-    agent, rewards = run_training()
-    print("\nTraining complete.")
-    print(f"Final Q-table size: {len(agent.q_table)} state-action pairs")
-
-    save_agent(agent, MODEL_OUTPUT_PATH)

@@ -4,7 +4,7 @@ This document explains how the whole system works end to end: what problem it so
 
 ## 1. What this system does
 
-Given a business process — either a BPMN 2.0 XML file or a process exported from the "Digital Twin" SaaS (a relational JSON schema of tasks, gateways, jobs/roles, and durations) — the system:
+Given a business process — a process exported from the "Digital Twin" SaaS (a relational JSON schema of tasks, gateways, jobs/roles, and durations) — the system:
 
 1. Parses the process into an internal graph (tasks, gateways, flows, start/end events).
 2. Computes AS-IS metrics: **Cycle Time**, **Theoretical Cycle Time**, **Cycle Time Efficiency**, **Critical Path**, **RACI matrix**, and **cost breakdown** (process / rework / waiting).
@@ -60,12 +60,9 @@ flowchart LR
     Inference --> RLEnv
 ```
 
-Two independent backends exist in the codebase:
+There is a single pipeline in the codebase: **the target-schema pipeline** (`redesign_target_process` / `POST /redesign/process`), which takes a process in the Digital Twin SaaS's own relational JSON schema, with real task durations, role rates, and RACI data. This is what the frontend uses, both for direct `.json` file uploads and for the live-fetch handoff from the Processes list.
 
-- **Legacy BPMN pipeline** (`redesign_process` / `POST /redesign`): takes an uploaded `.bpmn` file, assigns *synthetic* task metrics (random resource/duration/cost) if the file has none, and redesigns it. Used for local testing / arbitrary BPMN files with no real cost data.
-- **Target-schema pipeline** (`redesign_target_process` / `POST /redesign/process`): takes a process in the Digital Twin SaaS's own relational JSON schema, with **real** task durations, role rates, and RACI data. This is what the deployed frontend actually uses.
-
-Both pipelines share the same metrics engine, heuristics, environment, and trained Q-table logic — they only differ in how the process is parsed and how realistic the cost/time data is.
+> An earlier "legacy" pipeline (`redesign_process` / `POST /redesign`) accepted raw `.bpmn` XML files and filled in *synthetic* random task metrics when a file had none, for testing against arbitrary BPMN files with no real cost data. It has been removed — along with its dataset-building/translation/synthetic-metrics support modules and its separate Q-table — since the SaaS's real relational JSON export is the only input the application actually needs. `bpmn_parser.py` and `bpmn_writer.py` remain: they're still used internally (BPMN-XML-assisted parsing when the SaaS provides `bpmn_xml`, and rendering the AS-IS/TO-BE diagrams shown in the BPMN Diagram tab), they just aren't a separate redesign entry point anymore.
 
 ---
 
@@ -83,9 +80,9 @@ class ParsedProcess:
     other_elements # intermediate events / subprocess markers
 ```
 
-Every downstream module (metrics, critical path, heuristics, RL environment) only ever operates on this shape — it has no idea whether the process originally came from BPMN XML or from the SaaS's relational tables. This is what lets the same heuristics/RL/metrics code serve both pipelines.
+Every downstream module (metrics, critical path, heuristics, RL environment) only ever operates on this shape — it has no idea whether the graph topology came from a `bpmn_xml` field or was reconstructed purely from relational data. This is what lets the same heuristics/RL/metrics code stay agnostic to which of `target_schema_parser.py`'s two internal paths built the graph.
 
-Per-task fields relevant to the target-schema pipeline (set by `target_schema_parser.py`, absent/`None`/`False` for the raw legacy BPMN parser):
+Per-task fields set by `target_schema_parser.py`:
 
 - `duration` — total elapsed hours (process + waiting + rework)
 - `processing_time` — hours of actual work only (used for Theoretical Cycle Time)
@@ -96,13 +93,13 @@ Per-task fields relevant to the target-schema pipeline (set by `target_schema_pa
 
 ---
 
-## 4. Parsing: two ways in, one graph out
+## 4. Parsing: one input format, two internal reconstruction paths
 
-### 4.1 Legacy BPMN parser (`bpmn_parser.py`)
+### 4.1 The shared BPMN XML utilities (`bpmn_parser.py`, `bpmn_writer.py`)
 
-Straightforward XML walk using `xml.etree.ElementTree` against the BPMN 2.0 namespace. Reads `<task>`/`<userTask>`/etc., gateways, sequence flows (with a `meta:probability` extension attribute), start/end events, and subprocess/intermediate-event elements (whose inner tasks are flattened into the same `tasks` list). If a task has no `meta:metrics` extension element, duration/cost default to `0.0` — this is what triggers synthetic enrichment downstream (`synthetic_metrics.py`).
+`bpmn_parser.py` is a straightforward XML walk using `xml.etree.ElementTree` against the BPMN 2.0 namespace — it reads `<task>`/`<userTask>`/etc., gateways, sequence flows (with a `meta:probability` extension attribute), start/end events, and subprocess/intermediate-event elements. It isn't a redesign entry point on its own anymore; it's used internally by `target_schema_parser.py`'s XML-assisted path (§4.2) and its `ParsedProcess` class is the shared graph representation every module operates on. `bpmn_writer.py` is the inverse — it renders a `ParsedProcess` back into laid-out BPMN 2.0 XML, used to produce the AS-IS/TO-BE diagrams shown in the frontend's BPMN Diagram tab.
 
-### 4.2 Target-schema parser (`target_schema_parser.py`) — the real pipeline
+### 4.2 Target-schema parser (`target_schema_parser.py`) — the only pipeline
 
 The Digital Twin SaaS returns a process as relational JSON:
 
@@ -163,7 +160,7 @@ CT = Σ over paths: P(path) × Duration(path)
 Special handling:
 - **Parallel gateways** (AND-split/join): finds the matching join node (`find_parallel_join`, BFS distance from each branch, picks the common ancestor closest to all branches), takes `max()` of branch durations (they run concurrently) but `sum()` of branch costs (all branches still cost money).
 - **Inclusive (OR) gateways**: by default treated like exclusive (probability-weighted single path) via `USE_TRUE_OR_SEMANTICS_FOR_INCLUSIVE = False`. If flipped on, `_expected_inclusive_group` enumerates every subset of branches (2ⁿ, capped at `MAX_INCLUSIVE_SUBSET_ENUMERATION_BRANCHES = 16` before falling back to a weighted approximation) to compute the true expected time/cost of "any non-empty combination of branches fires."
-- Legacy `parallel_group` tasks (used by the Parallelism heuristic's executor) get the same max-time/sum-cost treatment via a simpler code path.
+- Tasks tagged with a `parallel_group` (set by the Parallelism heuristic's own executor when it splices in an AND-split/join) get the same max-time/sum-cost treatment via a simpler code path.
 
 Called with `time_field="duration"` for actual Cycle Time, or `time_field="processing_time"` for Theoretical Cycle Time (`calculate_theoretical_metrics`) — same traversal, different per-task field, which is why TCT is always ≤ CT (processing_time excludes waiting *and* rework, duration includes both).
 
@@ -252,16 +249,15 @@ Q(s,a) ← Q(s,a) + α × (reward + γ × max_a' Q(s', a') − Q(s,a))
 
 ### 7.4 Training (`train.py` / `train_target_schema.py`) — offline, done once
 
-`run_training()` runs `NUM_EPISODES = 5000` episodes, each picking a random process file from the training corpus, stepping the agent through it with `choose_action`/`update` until no eligible actions remain, and logging a rolling average reward every 500 episodes. The resulting `agent.q_table` is pickled to disk:
+`train.py` holds the shared training loop (`run_training()`, `save_agent()`, `load_process_files()`): it runs `num_episodes` episodes, each picking a random process file from a dataset, stepping the agent through it with `choose_action`/`update` until no eligible actions remain, and logging a rolling average reward every 500 episodes.
 
-- `train.py` → trains against `data/training_final/*.bpmn` (synthetic-metric legacy BPMN corpus) → `data/trained_q_table.pkl`.
-- `train_target_schema.py` → trains against `data/target_training/*.json` (target-schema corpus, built by `convert_to_target_schema.py` from the same BPMN corpus) → `data/trained_q_table_target_schema.pkl`, which is what the live `/redesign/process` endpoint actually loads.
+`train_target_schema.py` is the actual entry point used to (re)train the live agent: it calls `run_training()` against `data/target_training/*.json` (2,393 processes) for `NUM_EPISODES = 5000`, then pickles the resulting Q-table to `data/trained_q_table_target_schema.pkl` — the file the live `/redesign/process` endpoint loads.
 
-**This training step is not part of the request-serving path.** It was run offline in advance; the running backend only ever *reads* the pickled Q-table (`load_q_table()`).
+**This training step is not part of the request-serving path.** It was run offline in advance; the running backend only ever *reads* the pickled Q-table (`load_q_table(path)`). To retrain: `cd backend && ./.venv/Scripts/python.exe -m app.train_target_schema` — this overwrites the existing `.pkl`, so back it up first if you want to compare before/after.
 
 ### 7.5 Inference / redesign loop (`inference.py` — `_run_redesign`)
 
-This is what actually executes on every `/redesign` or `/redesign/process` request:
+This is what actually executes on every `/redesign/process` request:
 
 1. Snapshot AS-IS metrics + BPMN XML + full analysis (`_analysis_snapshot`).
 2. Loop: at each step, look at all currently-eligible actions, and try them **best-Q-value first** (`pick_best_action`): if the highest-Q action's actual reward turns out to be below `MIN_IMPROVEMENT_THRESHOLD = 0.02`, that candidate is rolled back and the next-best-Q action is tried instead, until either one clears the threshold or all eligible actions are exhausted for this step.
@@ -269,7 +265,7 @@ This is what actually executes on every `/redesign` or `/redesign/process` reque
 4. Stops when no eligible action clears the improvement threshold, or `max_steps` (default 10) is reached.
 5. Snapshot TO-BE metrics + BPMN XML + full analysis, compute overall time/cost reduction %, and package everything (including an `rl_details` block describing the algorithm, state/action space, reward function, hyperparameters, and Q-table size — this is static descriptive metadata, not per-request computation) into the API response.
 
-`redesign_process()` (legacy BPMN path) vs. `redesign_target_process()` (target-schema path) both just wire different parsers/environments into this same `_run_redesign` core.
+`redesign_target_process()` wires the target-schema parser and environment into this `_run_redesign` core; it's the only redesign entry point in `inference.py`.
 
 ---
 
@@ -278,8 +274,7 @@ This is what actually executes on every `/redesign` or `/redesign/process` reque
 FastAPI app, CORS-open to `http://localhost:3000`.
 
 - `GET /` — health check.
-- `POST /redesign` — multipart file upload of a `.bpmn` file → `redesign_process()` against the legacy Q-table. Temp file cleaned up in a `finally` block.
-- `POST /redesign/process` — JSON body, target-schema pipeline, against `trained_q_table_target_schema.pkl`. Accepts two shapes:
+- `POST /redesign/process` — JSON body, against `trained_q_table_target_schema.pkl`. Accepts two shapes:
   1. **Bundle shape** (used by the live frontend): `{"process": {...}, "subprocesses": {"<child_process_id>": {...}, ...}}` — every subprocess the main process (recursively) references has already been fetched by the frontend and is bundled in, so the backend never needs its own Digital Twin API credentials.
   2. **Flat shape** (local dev/testing): the process dict directly; subprocess references fall back to reading `<PROCESSES_DIR>/<id>.json` off disk.
 
@@ -302,7 +297,7 @@ Fetches **every** process (not paginated in the UI) via `fetchAllProcesses()` in
 ### 9.3 Redesign page (`app/page.js`)
 
 Two ways to get a process here:
-1. **Direct upload** — drag/drop or file-picker a `.bpmn`/`.xml`/`.json` file, POSTed straight to the backend (`/redesign` for BPMN, `/redesign/process` for JSON).
+1. **Direct upload** — drag/drop or file-picker a `.json` SaaS process export, POSTed straight to the backend's `/redesign/process`.
 2. **Live fetch handoff** — on mount, checks `sessionStorage` for a bundle left by the Processes page, and if present, automatically runs `runRedesign(bundle)` against `/redesign/process`.
 
 Once a `result` is available, it's rendered as 6 tabs (via the `Tabs` component, `key={activeResultTab}` to force a full remount per tab switch):
@@ -326,29 +321,25 @@ This project pins a canary combination (Next.js 16.2.11 + React 19.2) that has a
 
 ```
 backend/
-  main.py                          FastAPI app, /redesign and /redesign/process endpoints
+  main.py                          FastAPI app, /redesign/process endpoint
   app/
-    bpmn_parser.py                 BPMN 2.0 XML -> ParsedProcess
+    bpmn_parser.py                 BPMN 2.0 XML -> ParsedProcess (used by target_schema_parser's XML-assisted path)
     bpmn_writer.py                 ParsedProcess -> BPMN 2.0 XML (+ auto layout, for AS-IS/TO-BE diagrams)
     target_schema_parser.py        Digital Twin JSON schema -> ParsedProcess (XML-assisted or pure-relational)
-    convert_to_target_schema.py    One-off: legacy BPMN training corpus -> target-schema JSON corpus
     metrics_calculator.py          Cycle Time / Theoretical Cycle Time / Cycle Time Efficiency
     critical_path.py               Critical Path Method (CPM)
     currency.py                    Live exchange-rate conversion to USD
-    synthetic_metrics.py           Random resource/duration/cost/probability assignment (legacy pipeline only)
-    translator.py                  Non-English task/resource name translation (legacy corpus)
     state_builder.py               RL state encoding (time/cost buckets + heuristic eligibility bits)
     environment.py                 Gym-style RL environment (reset/step, reward function)
     q_learning_agent.py             Tabular Q-learning agent (epsilon-greedy, TD update)
-    train.py / train_target_schema.py   Offline training entry points -> pickled Q-tables
+    train.py                       Shared training loop (run_training/save_agent/load_process_files)
+    train_target_schema.py         Training entry point -> data/trained_q_table_target_schema.pkl
     inference.py                   Request-time redesign loop, analysis snapshot, natural-language trace
-    dataset_builder.py, build_final_dataset.py, validate_dataset.py, evaluate.py
-                                    Dataset curation / evaluation utilities for the training corpus
     heuristics/
       registry.py                  HEURISTIC_ORDER, labels, DETECTORS, EXECUTORS wiring
       detectors/*.py                One eligibility-detector function per heuristic
       executors/*.py                One process-mutation function per heuristic
-  data/                             Training/eval corpora, cached process JSON, pickled Q-tables
+  data/                             Training corpus (target_training/target_eval), cached process JSON, pickled Q-table
 
 frontend/
   app/
