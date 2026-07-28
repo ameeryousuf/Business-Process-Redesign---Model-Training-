@@ -79,7 +79,25 @@ export async function login(email, password) {
   return data.user;
 }
 
-export async function fetchProcesses({ page = 1, limit = 10, search = "" } = {}) {
+// The Digital Twin API's /process?search= only matches name, code, overview, or company
+// name (per its own reference docs) -- a bare process ID never matches, since it isn't
+// text in any of those fields. When the search term looks like an ID, look it up directly
+// via GET /process/:id in parallel and fold it into the results if the text search didn't
+// already surface it, so searching "1972" finds process 1972 even though nothing there
+// literally contains the digits "1972" as text.
+async function fetchProcessById(id) {
+  try {
+    const response = await fetch(`${DIGITAL_TWIN_BASE_URL}/process/${id}`, {
+      ...authFetchOptions(),
+    });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchProcessesPage({ page = 1, limit = 100, search = "" } = {}) {
   const params = new URLSearchParams({ page: String(page), limit: String(limit) });
   if (search) params.set("search", search);
 
@@ -92,6 +110,40 @@ export async function fetchProcesses({ page = 1, limit = 10, search = "" } = {})
   }
 
   return response.json();
+}
+
+/**
+ * Fetches every process matching `search` (or all processes, if empty), walking every
+ * page of the Digital Twin API's paginated /process endpoint and concatenating the
+ * results into one flat array -- the processes page shows everything at once rather
+ * than paginating. Also folds in a direct GET /process/:id lookup when `search` looks
+ * like a numeric ID (see fetchProcessById above), deduplicated against the walked list.
+ */
+export async function fetchAllProcesses({ search = "" } = {}) {
+  const trimmed = search.trim();
+  const pageSize = 100;
+  const maxPages = 50; // safety cap (5,000 processes) against a runaway/misbehaving server
+  const isNumericId = /^\d+$/.test(trimmed);
+  const idMatchPromise = isNumericId ? fetchProcessById(trimmed) : Promise.resolve(null);
+
+  let all = [];
+  let page = 1;
+  while (page <= maxPages) {
+    const result = await fetchProcessesPage({ page, limit: pageSize, search: trimmed });
+    const data = result.data || [];
+    all = all.concat(data);
+
+    const totalPages = result.totalPages || 1;
+    if (page >= totalPages || data.length === 0) break;
+    page += 1;
+  }
+
+  const idMatch = await idMatchPromise;
+  if (idMatch && !all.some((p) => p.process_id === idMatch.process_id)) {
+    all = [idMatch, ...all];
+  }
+
+  return all;
 }
 
 export async function fetchProcessWithRelations(id) {
