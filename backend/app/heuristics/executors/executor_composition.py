@@ -14,12 +14,6 @@ def apply_composition(parsed, task_a_id, task_b_id):
     middle_flows = [f for f in flows if f["source"] == task_a_id and f["target"] == task_b_id]
     outgoing_flows = [f for f in flows if f["source"] == task_b_id]
 
-    # The detector only verifies task_a's outgoing count and task_b's
-    # incoming count. It never checks task_a's incoming edges or task_b's
-    # outgoing edges. The rewiring below assumes exactly one of each; if
-    # that assumption doesn't hold, picking the first match with next()
-    # would silently drop the other edges (dangling flows pointing at the
-    # about-to-be-removed task ids), so reject the candidate instead.
     if len(incoming_flows) != 1 or len(middle_flows) != 1 or len(outgoing_flows) != 1:
         return None
 

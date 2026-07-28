@@ -1,6 +1,3 @@
-// Digital Twin Server -- live API client (auth, process listing/fetching, bundling).
-// Base URL defaults to the testing environment; override with
-// NEXT_PUBLIC_DIGITAL_TWIN_BASE_URL for production.
 export const DIGITAL_TWIN_BASE_URL =
   process.env.NEXT_PUBLIC_DIGITAL_TWIN_BASE_URL ||
   "https://server-digitaltwin-enterprise-testing.up.railway.app";
@@ -10,9 +7,6 @@ export const BACKEND_BASE_URL =
 
 const TOKEN_KEY = "digital_twin_token";
 const USER_KEY = "digital_twin_user";
-// Sentinel stored when the server authenticates via an httpOnly cookie instead of
-// returning a bearer token in the response body -- there is nothing readable to
-// store in that case, this just marks "the last login call succeeded" for routing.
 const COOKIE_SESSION_SENTINEL = "cookie-session";
 
 export function saveSession(token, user) {
@@ -46,9 +40,6 @@ function authFetchOptions() {
     throw new Error("Not authenticated. Please log in again.");
   }
 
-  // "credentials: include" makes the browser send the httpOnly auth cookie on every
-  // cross-origin request to the Digital Twin API -- required whether or not we also
-  // have a bearer token, since some deployments set the cookie regardless.
   const options = { credentials: "include" };
 
   if (token !== COOKIE_SESSION_SENTINEL) {
@@ -62,7 +53,7 @@ export async function login(email, password) {
   const response = await fetch(`${DIGITAL_TWIN_BASE_URL}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: "include", // allow the server to set an auth cookie in the response
+    credentials: "include",
     body: JSON.stringify({ email, password }),
   });
 
@@ -72,19 +63,10 @@ export async function login(email, password) {
 
   const data = await response.json().catch(() => ({}));
 
-  // The token may come back in the body (bearer-header auth) or not at all (the
-  // server set it as an httpOnly cookie instead, which JS can't read) -- either way,
-  // a 2xx response here means login succeeded.
   saveSession(data.access_token || null, data.user);
   return data.user;
 }
 
-// The Digital Twin API's /process?search= only matches name, code, overview, or company
-// name (per its own reference docs) -- a bare process ID never matches, since it isn't
-// text in any of those fields. When the search term looks like an ID, look it up directly
-// via GET /process/:id in parallel and fold it into the results if the text search didn't
-// already surface it, so searching "1972" finds process 1972 even though nothing there
-// literally contains the digits "1972" as text.
 async function fetchProcessById(id) {
   try {
     const response = await fetch(`${DIGITAL_TWIN_BASE_URL}/process/${id}`, {
@@ -112,17 +94,10 @@ async function fetchProcessesPage({ page = 1, limit = 100, search = "" } = {}) {
   return response.json();
 }
 
-/**
- * Fetches every process matching `search` (or all processes, if empty), walking every
- * page of the Digital Twin API's paginated /process endpoint and concatenating the
- * results into one flat array -- the processes page shows everything at once rather
- * than paginating. Also folds in a direct GET /process/:id lookup when `search` looks
- * like a numeric ID (see fetchProcessById above), deduplicated against the walked list.
- */
 export async function fetchAllProcesses({ search = "" } = {}) {
   const trimmed = search.trim();
   const pageSize = 100;
-  const maxPages = 50; // safety cap (5,000 processes) against a runaway/misbehaving server
+  const maxPages = 50;
   const isNumericId = /^\d+$/.test(trimmed);
   const idMatchPromise = isNumericId ? fetchProcessById(trimmed) : Promise.resolve(null);
 
@@ -158,19 +133,6 @@ export async function fetchProcessWithRelations(id) {
   return response.json();
 }
 
-/**
- * Fetches a process plus every subprocess it references (recursively). Returns
- * {process, subprocesses} ready to POST to the backend's /redesign/process bundle
- * endpoint -- the backend never needs its own Digital Twin API credentials since
- * everything it needs is bundled here.
- *
- * Deliberately does NOT fetch bpmn_xml from the separate /bpmn-native/generate
- * endpoint -- that BPMN generator is still under construction on the server and is
- * sometimes slow, wrong, or simply unavailable for a given process. The backend
- * builds the process graph directly from process_task[]/gateways[] (the same data
- * fetched here) whenever bpmn_xml is missing or unusable, so skipping this call
- * removes an extra request and its failure mode entirely rather than working around it.
- */
 export async function fetchProcessBundle(id) {
   const visited = new Set([id]);
   const subprocesses = {};

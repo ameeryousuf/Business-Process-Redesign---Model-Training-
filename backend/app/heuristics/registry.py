@@ -59,8 +59,6 @@ DETECTORS = {
     "extra_resources": detect_extra_resources,
 }
 
-# Executors below assume they receive a SINGLE candidate dict, except
-# "numerical_involvement" which receives the full candidates list (a list of role names).
 EXECUTORS = {
     "parallelism": lambda parsed, c: apply_parallelism(parsed, c["task_a"], c["task_b"]),
     "elimination": lambda parsed, c: apply_elimination(parsed, c["task_id"]),

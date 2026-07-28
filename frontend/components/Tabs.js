@@ -1,20 +1,6 @@
 "use client";
 import { motion, AnimatePresence } from "framer-motion";
 
-/**
- * `tabs`: [{ id, label, content }]. Renders a horizontally-scrollable pill tab bar
- * (mirrors the AS-IS/TO-BE toggle pattern already used elsewhere) plus an animated
- * panel switch below it. Controlled: the caller owns `active`/`onActiveChange`.
- *
- * IMPORTANT: the caller must render this with `key={active}` (see app/page.js).
- * In this app's current React/Next canary, a plain prop-driven update to this
- * component's rendered children sometimes never commits (verified via React
- * internals: the work-in-progress fiber computes the new tree correctly, but it
- * never gets promoted to `current`, leaving the DOM stuck on stale content even
- * though the parent's own re-render commits fine). Keying by `active` forces a
- * full remount on every tab switch instead of an in-place update, which sidesteps
- * the bug reliably. Don't remove the key without re-verifying tab switches work.
- */
 export default function Tabs({ tabs, active, onActiveChange }) {
   const activeTab = tabs.find((t) => t.id === active) || tabs[0];
 

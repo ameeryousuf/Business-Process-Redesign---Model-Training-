@@ -15,11 +15,6 @@ MODEL_PATH = "data/trained_q_table.pkl"
 MIN_IMPROVEMENT_THRESHOLD = 0.02
 DEFAULT_SEED = 42
 
-# Training configuration the shipped Q-tables were produced with (see
-# app/q_learning_agent.py defaults and app/train_target_schema.py::NUM_EPISODES) --
-# descriptive only, surfaced to the frontend's "RL Details" tab so the agent's
-# behavior isn't a black box. If the model is ever retrained with different values,
-# update these to match.
 RL_HYPERPARAMETERS = {
     "learning_rate_alpha": 0.1,
     "discount_factor_gamma": 0.9,
@@ -64,10 +59,6 @@ def _already_has_baked_metrics(parsed):
 
 
 def _analysis_snapshot(parsed):
-    """Cycle Time, Theoretical Cycle Time, Cycle Time Efficiency (Ch.7.1.1-7.1.2),
-    the Critical Path (Ch.7.1.3), the RACI matrix, cost distribution, and a per-task
-    time/cost breakdown for the process's current state.
-    """
     metrics = calculate_metrics(parsed)
     theoretical = calculate_theoretical_metrics(parsed)
     cte = calculate_cycle_time_efficiency(metrics["total_time_minutes"], theoretical["theoretical_time_minutes"])
@@ -83,11 +74,6 @@ def _analysis_snapshot(parsed):
         for t in parsed.tasks
     ]
 
-    # Cost distribution: process-time labor cost vs. rework-time labor cost. Waiting
-    # time is always $0 by definition of the cost model (labor cost only accrues
-    # during active work), so it's included as an explicit, always-zero category
-    # rather than omitted -- that's a real, documented property of the model, not a
-    # gap in the data.
     rework_cost = calculate_metrics(parsed, cost_field="rework_cost")["total_cost_usd"]
     process_cost = round(metrics["total_cost_usd"] - rework_cost, 2)
     cost_distribution = {
@@ -319,9 +305,6 @@ def _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold, 
         applied = False
         best_below_threshold = None
 
-        # Try actions best-Q-first; if the top pick doesn't clear the improvement
-        # threshold (or fails to apply), fall through to the next-best eligible
-        # action instead of giving up on the whole process.
         while remaining_candidates:
             action = pick_best_action(q_table, state, remaining_candidates)
             if action is None:
@@ -473,8 +456,6 @@ def redesign_process(bpmn_path, q_table, max_steps=10,
     env = ProcessRedesignEnv(bpmn_path, time_low=time_low, time_high=time_high,
                               cost_low=cost_low, cost_high=cost_high, max_steps=max_steps)
 
-    # Legacy BPMN pipeline uses arbitrary synthetic unit-rates (see synthetic_metrics.py),
-    # not a real currency -- label it as such rather than implying a real-world value.
     return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold,
                           currency_code="generic_units")
 
@@ -482,11 +463,6 @@ def redesign_process(bpmn_path, q_table, max_steps=10,
 def redesign_target_process(data, processes_dir, q_table, max_steps=10,
                              time_low=5, time_high=20, cost_low=50, cost_high=200,
                              min_improvement_threshold=MIN_IMPROVEMENT_THRESHOLD):
-    """Same redesign pipeline as `redesign_process`, but for a process already in the
-    SaaS's relational JSON schema. No translation/synthetic enrichment is applied --
-    the schema's own real duration/cost/probability/value_classification data is used
-    as-is (see app/target_schema_parser.py).
-    """
     from app.target_schema_parser import parse_target_process
 
     enriched = parse_target_process(data, processes_dir)
@@ -498,7 +474,6 @@ def redesign_target_process(data, processes_dir, q_table, max_steps=10,
                               cost_low=cost_low, cost_high=cost_high, max_steps=max_steps,
                               parser_fn=_parser_fn)
 
-    # All costs are converted to USD at parse time (see app/currency.py).
     return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold,
                           currency_code="USD")
 

@@ -9,9 +9,6 @@ from app.bpmn_writer import parsed_to_bpmn_xml
 
 NVA_NAME_KEYWORDS = ["check", "review", "verify", "audit", "validate", "approve", "confirm", "inspect"]
 
-# Synthetic PKR/hour rates, scaled up from the old synthetic unit-rate pipeline's
-# ratios (Officer=10, Clerk=8, Manager=15, Analyst=12, System=2) to a realistic PKR
-# scale matching the ranges observed in the real SaaS sample data (job.hourlyRate).
 RESOURCE_RATE_PKR = {
     "Officer": 3000,
     "Clerk": 2400,
@@ -31,12 +28,6 @@ def _classify_value(task_name):
 
 
 def _collapse_pass_through_nodes(parsed):
-    """The target schema's gateway branches can only reference a task or a named end
-    event -- there is no slot for intermediate events / other pass-through elements.
-    Splice every such node out of the flow graph (chaining probabilities through it)
-    before conversion, so every remaining flow's source/target is a task, gateway, or
-    end event the relational schema can actually express.
-    """
     keep_ids = {t["id"] for t in parsed.tasks}
     keep_ids |= {g["id"] for g in parsed.gateways}
     keep_ids |= {e["id"] for e in parsed.end_events}
@@ -74,13 +65,6 @@ def _collapse_pass_through_nodes(parsed):
 
 
 def _detect_and_collapse_back_edges(parsed):
-    """Find cycle-forming (back-edge) flows via DFS from the start event, collapse
-    each into an `expected_rework_time` contribution on the loop-entry task using
-    the textbook's CT = CTb/(1-r) rework-block formula (the *extra* time beyond the
-    first pass is CTb * r/(1-r)), then remove the back edge so the resulting graph
-    is acyclic -- the target schema has no loop construct, only a flat per-task
-    rework-time field.
-    """
     if not parsed.start_events:
         return {}
 

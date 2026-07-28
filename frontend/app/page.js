@@ -28,10 +28,6 @@ export default function Home() {
   const [activeResultTab, setActiveResultTab] = useState("flow");
   const fileInputRef = useRef(null);
 
-  // If we arrived here from the Processes list's "Redesign" button, a bundle was
-  // already fetched live (with-relations + BPMN XML + subprocesses) and handed off
-  // via sessionStorage. Pick it up and run the redesign automatically. Gated on
-  // `authed` so an unauthenticated visitor can't trigger a redesign request either.
   useEffect(() => {
     if (!authed) return;
 
@@ -441,7 +437,6 @@ export default function Home() {
 
   return (
     <main className="min-h-screen">
-      {/* Hero */}
       <div className="border-b" style={{ borderColor: "var(--panel-border)" }}>
         <div className="px-6 md:px-16 py-14 md:py-20">
           <div className="flex items-center justify-between mb-4">
@@ -501,7 +496,6 @@ export default function Home() {
           </motion.div>
         )}
 
-        {/* Upload zone */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -583,7 +577,6 @@ export default function Home() {
 
         {result && (
           <div className="space-y-10 pt-2">
-            {/* Impact summary */}
             <MotionSection>
               <div
                 className="rounded-2xl p-7 border card-shadow"

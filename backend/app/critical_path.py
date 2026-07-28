@@ -1,17 +1,3 @@
-"""Critical Path Method (CPM), per Dumas et al. Ch.7.1.3.
-
-CPM only applies to process models without decision gateways. Per the book:
-"we need to simplify [the model] by removing all such gateways... we can eliminate
-the branches of an XOR-split that lead to an early completion of the case as well as
-those gateways associated with rework loops." We implement that simplification by
-keeping only the highest-probability branch at every XOR/OR split (the dominant path)
-while leaving true AND/parallel structure intact, then run the standard forward
-(ES/EF) and backward (LS/LF) pass over the resulting acyclic single-path-with-parallel-
-blocks graph, using each task's processing_time (not full cycle time, which would
-double-count waiting time already captured separately).
-"""
-
-
 def _dominant_path_flows(parsed):
     graph = {}
     for flow in parsed.flows:
@@ -69,7 +55,6 @@ def compute_critical_path(parsed):
         successors.setdefault(flow["source"], []).append(flow["target"])
         predecessors.setdefault(flow["target"], []).append(flow["source"])
 
-    # Topological order via Kahn's algorithm, restricted to nodes reachable from start.
     reachable = set()
     stack = [start_id]
     while stack:

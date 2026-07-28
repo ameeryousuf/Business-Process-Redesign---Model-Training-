@@ -10,12 +10,6 @@ def apply_resequencing(parsed, expensive_task_id, cheaper_task_id):
     middle_flows = [f for f in flows if f["source"] == expensive_task_id and f["target"] == cheaper_task_id]
     outgoing_flows = [f for f in flows if f["source"] == cheaper_task_id]
 
-    # The detector only verifies expensive_task's outgoing count and
-    # cheaper_task's incoming count. It never checks expensive_task's
-    # incoming edges or cheaper_task's outgoing edges. The swap below
-    # assumes exactly one of each boundary flow; if that assumption
-    # doesn't hold, next() would silently pick one and drop the rest,
-    # so reject the candidate instead of dropping edges silently.
     if len(incoming_flows) != 1 or len(middle_flows) != 1 or len(outgoing_flows) != 1:
         return None
 

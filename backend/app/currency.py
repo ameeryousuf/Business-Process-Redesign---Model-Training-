@@ -24,10 +24,6 @@ def _fetch_usd_rates():
 
 
 def convert_to_usd(amount, from_currency):
-    """rateUSD_e = hourlyRate_e / currencyRate_e, per the cost-model spec -- the API's
-    rates table is already USD-based (rates[X] = units of X per 1 USD), so converting
-    to USD is a direct division, no PKR double-hop needed.
-    """
     if amount is None:
         return None
 

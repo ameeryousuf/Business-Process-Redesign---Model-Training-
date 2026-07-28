@@ -9,8 +9,6 @@ def apply_case_based_work(parsed, gateway_id):
     gateway_lookup = {g["id"]: g for g in new_parsed.gateways}
     gateway = gateway_lookup.get(gateway_id)
 
-    # Guard against re-selecting the same gateway on a later pass (reward
-    # farming): once applied, mark it so the detector skips it next time.
     if gateway is None or gateway.get("case_based_work_applied"):
         return None
 

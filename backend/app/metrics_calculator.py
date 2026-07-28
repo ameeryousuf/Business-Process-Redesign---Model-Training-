@@ -51,12 +51,6 @@ def find_parallel_join(split_id, graph, gateway_type_lookup):
 
 MAX_INCLUSIVE_SUBSET_ENUMERATION_BRANCHES = 16
 
-# INCLUSIVE gateway treatment: the textbook (Dumas et al. Ch.7) never actually gives a
-# closed-form formula for true concurrent-branch OR gateways -- only XOR-blocks. To keep
-# every manual/hand calculation against the book's formulas exactly reproducible by this
-# engine, INCLUSIVE gateways are treated the same as EXCLUSIVE (plain weighted average,
-# exactly one branch per instance) by default. Set to True to use the literature-general
-# case instead (independent per-branch activation via subset enumeration).
 USE_TRUE_OR_SEMANTICS_FOR_INCLUSIVE = False
 
 
@@ -65,13 +59,6 @@ def _task_cost(task, cost_field):
 
 
 def _expected_inclusive_group(branch_times, branch_costs, branch_probs):
-    """True OR-split/OR-join semantics: each branch activates independently with its
-    own probability (1 to N branches may fire per instance). Expected time/cost is
-    computed by enumerating every activation subset, since within an active subset
-    the branches behave like an AND-block (time = max, cost = sum), per Ch.7 of
-    Dumas et al. Falls back to a simpler weighted-average treatment for gateways with
-    an impractically large branch count, to avoid 2^N blowup.
-    """
     n = len(branch_probs)
 
     if n == 0:
@@ -121,12 +108,6 @@ def calculate_metrics(parsed, time_field="duration", cost_field="cost"):
     def task_time(task):
         if time_field in task:
             return task[time_field]
-        # "processing_time" is the one field allowed to fall back to full duration --
-        # that's the legacy (raw BPMN upload) pipeline's way of saying "no separate
-        # waiting/rework breakdown available, treat all time as processing time".
-        # Newer breakdown fields (waiting_time_hours, rework_time_hours) must default
-        # to 0 instead, or a task missing one would silently inherit its ENTIRE
-        # duration into that bucket.
         if time_field == "processing_time":
             return task.get("duration", 0.0)
         return 0.0
@@ -273,11 +254,6 @@ def calculate_metrics(parsed, time_field="duration", cost_field="cost"):
 
 
 def calculate_theoretical_metrics(parsed):
-    """Theoretical Cycle Time (TCT): the cycle time formulas applied to each task's
-    processing_time instead of its full duration (which includes waiting time), per
-    Dumas et al. Ch.7.1.2. Falls back to `duration` for tasks with no processing_time
-    field (e.g. the legacy BPMN pipeline, which has no separate waiting-time concept).
-    """
     result = calculate_metrics(parsed, time_field="processing_time")
     return {
         "theoretical_time_hours": result["total_time_hours"],
@@ -286,14 +262,6 @@ def calculate_theoretical_metrics(parsed):
 
 
 def calculate_cycle_time_efficiency(cycle_time_minutes, theoretical_time_minutes):
-    """CTE = TCT / CT, per Eq. 7.5. Returned as a 0-1 ratio (not a percentage).
-
-    Takes minutes (not hours) even though both are already-rounded fields off the
-    metrics dicts -- hours are rounded to 2 decimals (~0.6min resolution), which is
-    coarse enough to shift the ratio's 2nd significant digit (e.g. 19.09% vs the
-    correct 19.11%). Minutes are rounded to 2 decimals too, but that is 60x finer,
-    so the double-rounding error stays well below the displayed precision.
-    """
     if cycle_time_minutes <= 0:
         return 0.0
     return round(theoretical_time_minutes / cycle_time_minutes, 4)

@@ -14,17 +14,7 @@ export default function ProcessesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [redesigningId, setRedesigningId] = useState(null);
-  // Bumped once per completed load and used as a `key` below to force the results
-  // section to fully remount instead of updating in place -- in this app's current
-  // React/Next setup, a plain state-driven re-render has been observed to sometimes
-  // never commit to the DOM even though the component's internal state updated
-  // correctly (see the same fix applied to the Tabs component). Keying by a value
-  // that changes on every load sidesteps that reliably.
   const [loadSeq, setLoadSeq] = useState(0);
-  // Guards against out-of-order responses: if `search` changes again before an
-  // in-flight request resolves, only the most recently *initiated* request is allowed
-  // to write its result into state -- otherwise a slower, stale response arriving after
-  // a newer one could silently overwrite good data with stale/empty data.
   const requestIdRef = useRef(0);
 
   const load = useCallback(async (targetSearch) => {
@@ -33,8 +23,6 @@ export default function ProcessesPage() {
     setError(null);
     try {
       const result = await fetchAllProcesses({ search: targetSearch });
-      // eslint-disable-next-line no-console
-      console.debug("[processes] fetchAllProcesses result", { targetSearch, count: result.length, result });
       if (requestId !== requestIdRef.current) return;
       setProcesses(result || []);
     } catch (err) {
@@ -48,15 +36,11 @@ export default function ProcessesPage() {
     }
   }, []);
 
-  // Wait for the auth guard to confirm a token exists before firing any authenticated
-  // request -- prevents an unauthenticated visitor from ever triggering a real fetch.
   useEffect(() => {
     if (!authed) return;
     load(search);
   }, [authed, search, load]);
 
-  // Debounce the raw keystrokes into `search` so typing feels real-time without
-  // firing a request per keystroke.
   useEffect(() => {
     const handle = setTimeout(() => {
       setSearch(searchInput.trim());

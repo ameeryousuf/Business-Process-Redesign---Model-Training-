@@ -4,10 +4,6 @@ def detect_elimination(parsed, threshold_ratio=0.2):
     if len(tasks) <= 1:
         return {"eligible": False, "candidates": []}
 
-    # When real value-add classification is available (VA/BVA/NVA, e.g. from the
-    # SaaS's own task data), it is the literature-correct signal for Elimination
-    # ("an activity is superfluous if it adds no value from a customer's point of
-    # view") -- use it directly instead of the cost/duration proxy below.
     classified_tasks = [t for t in tasks if t.get("value_classification")]
     if classified_tasks:
         candidates = [

@@ -36,15 +36,7 @@ def _compute_task_metrics(task_record):
     waiting_time_h = (task_record.get("expected_waiting_time") or 0) / 60.0
     rework_time_h = (task_record.get("expected_rework_time") or 0) / 60.0
     duration = process_time_h + waiting_time_h + rework_time_h
-    # Theoretical Cycle Time uses processing time only -- per the reference cost/cycle
-    # time spec, Tproc(path) excludes both waiting time AND rework time. Rework still
-    # counts toward Duration (and toward labor cost, below) but not toward the
-    # "value-adding" theoretical/processing time used for CTE.
     processing_time = process_time_h
-
-    # Labor cost basis per the cost-model spec: Hwork = (Tproc + Trework) / 60 --
-    # labor hours accrue during active work (processing AND rework), never during
-    # waiting (non-working queue time).
     work_hours = process_time_h + rework_time_h
 
     cost = 0.0
@@ -58,8 +50,6 @@ def _compute_task_metrics(task_record):
         allocation = allocation_pct / 100.0
         rate_usd = currency.convert_to_usd(job.get("hourlyRate") or 0, job.get("currencyType"))
         cost += work_hours * allocation * rate_usd
-        # The rework-attributable slice of this task's cost -- same per-role rate/
-        # allocation, just against rework hours only instead of (process + rework).
         rework_cost += rework_time_h * allocation * rate_usd
 
         role = job_task.get("role")
@@ -85,12 +75,6 @@ def _compute_task_metrics(task_record):
 
 
 def _load_subprocess_data(child_process_id, source):
-    """`source` is either a directory path (reads <id>.json from disk -- the local
-    dataset/testing mode) or a dict already keyed by process_id (an in-memory bundle
-    of subprocess data the caller already fetched, e.g. from the live Digital Twin
-    API) -- the frontend recursively fetches every referenced subprocess and bundles
-    them together in one request, so the backend never needs its own API credentials.
-    """
     if isinstance(source, dict):
         if child_process_id not in source:
             raise SubprocessNotFoundError(
@@ -123,9 +107,6 @@ def _resolve_subprocess(child_process_id, source, currently_resolving):
     )
     sub_metrics = calculate_metrics(sub_parsed)
     sub_theoretical = calculate_theoretical_metrics(sub_parsed)
-    # Same expectation machinery as duration/cost, just pointed at the waiting-time,
-    # rework-time, and rework-cost fields instead -- gives the subprocess-as-a-whole
-    # an aggregate breakdown consistent with how its own tasks are broken down.
     sub_waiting = calculate_metrics(sub_parsed, time_field="waiting_time_hours")
     sub_rework_time = calculate_metrics(sub_parsed, time_field="rework_time_hours")
     sub_rework_cost = calculate_metrics(sub_parsed, cost_field="rework_cost")
@@ -141,11 +122,6 @@ def _resolve_subprocess(child_process_id, source, currently_resolving):
 
 
 def _enrich_from_relations(parsed, data, processes_dir, currently_resolving):
-    """Fills in duration/cost/resource/RACI/probabilities on a graph that was already
-    built from `bpmn_xml`, cross-referencing the relational fields (`process_task`,
-    `gateways[].branches[].probability`, `jobTasks`, `value_classification`,
-    `child_process_id`) by matching XML element ids/gateway names against them.
-    """
     process_task_by_task_id = {
         pt["task_id"]: pt for pt in data.get("process_task", []) if pt.get("task_id") is not None
     }
@@ -158,10 +134,6 @@ def _enrich_from_relations(parsed, data, processes_dir, currently_resolving):
         task["value_classification"] = None
         task["is_subprocess"] = False
         task["raci"] = []
-        # Defaults for any task this loop doesn't end up matching against relational
-        # data (e.g. an XML element with no corresponding process_task row) -- without
-        # these, calculate_metrics(time_field="waiting_time_hours"/...) would treat the
-        # field as simply absent rather than genuinely zero.
         task["waiting_time_hours"] = 0.0
         task["rework_time_hours"] = 0.0
         task["rework_cost"] = 0.0
@@ -237,9 +209,6 @@ def _enrich_from_relations(parsed, data, processes_dir, currently_resolving):
                     target_xml_id = target_gateway["id"]
 
             if target_xml_id is None:
-                # Branch converges directly to a gateway/join with no explicit task or
-                # named end event target (e.g. connect_to_end without an end_event_name).
-                # Resolved below once flows matched by explicit target are excluded.
                 unresolved_branches.append(probability)
                 continue
 
@@ -254,12 +223,6 @@ def _enrich_from_relations(parsed, data, processes_dir, currently_resolving):
                     break
 
             if not matched:
-                # The branch's target_task_id doesn't match any direct outgoing flow --
-                # the XML routes through an explicit join/converge gateway before reaching
-                # that task (e.g. "Yes" -> Gateway_Join -> the actual task), so there's no
-                # flow whose target is literally that task. Treat the same as an
-                # unresolved branch so it can still be matched by position below, instead
-                # of silently dropping the probability and leaving the flow at its default.
                 unresolved_branches.append(probability)
 
         remaining_flows = [f for f in outgoing if id(f) not in matched_flows]
@@ -269,7 +232,6 @@ def _enrich_from_relations(parsed, data, processes_dir, currently_resolving):
 
 def _process_task_sort_key(pt):
     order = pt.get("order")
-    # Rows with no order (data still "under construction") sort last, deterministically.
     return (order if order is not None else 10 ** 9, pt.get("task_id") or 0)
 
 
@@ -285,28 +247,6 @@ def _slugify(name):
 
 
 def _build_graph_from_relations(data, source, currently_resolving):
-    """Builds a full ParsedProcess graph (tasks/gateways/flows/start/end events)
-    directly from the relational `process_task[]` / `gateways[]` data -- no bpmn_xml
-    involved at all. This is the fallback (and, for many processes, the only viable)
-    construction path: the live system's generated BPMN XML is still under active
-    development and is sometimes missing or malformed, so the graph must be derivable
-    from the relational data alone.
-
-    `process_task[].order` is the only ordering signal available, and it is NOT a
-    strict "next task" pointer -- it reflects authoring/creation order, so a later
-    `order` value can still represent an earlier step (e.g. a short alternate branch
-    task created right after its gateway, while the main branch keeps extending with
-    higher order values). To reconstruct real adjacency:
-      - `gateways[].after_task_id` (or None, for "before the first task") pins a
-        gateway to a specific position -- whatever normally would come next from that
-        position is instead entirely replaced by the gateway's branches.
-      - For a gateway's branches, the ONE branch whose `target_task_id` matches the
-        task that would naturally come next in `order` is treated as continuing the
-        main flow (falls through normally afterward). Any OTHER branch that targets a
-        task is a short alternate path: after that task finishes, it goes straight to
-        the process end (unless some other gateway is explicitly pinned to it via its
-        own `after_task_id`).
-    """
     parsed = ParsedProcess()
 
     process_tasks = sorted(
@@ -340,9 +280,6 @@ def _build_graph_from_relations(data, source, currently_resolving):
             parsed.end_events.append({"id": node_id, "name": name})
         return end_node_by_name[name]
 
-    # A branch target is a "jump" (a short alternate path, not a main-flow
-    # continuation) if it does not match the task that would naturally come next
-    # from the gateway's position in the raw `order` sequence.
     jump_target_task_ids = set()
     for gw in gateways:
         after_task_id = gw.get("after_task_id")
@@ -363,18 +300,11 @@ def _build_graph_from_relations(data, source, currently_resolving):
             if target_task_id is not None and target_task_id != natural_task_id:
                 jump_target_task_ids.add(target_task_id)
 
-    # The main trunk excludes jump-target tasks entirely -- they're short dead-end
-    # alternate branches, not steps on the through-line, so they must not be treated
-    # as "next" for whatever plain (non-gateway-pinned) task precedes them in `order`.
     trunk_tasks = [pt for pt in process_tasks if pt.get("task_id") not in jump_target_task_ids]
     trunk_node_ids = [_task_node_id(pt) for pt in trunk_tasks]
     trunk_index_by_node_id = {node_id: i for i, node_id in enumerate(trunk_node_ids)}
 
     def node_after_trunk_position(idx):
-        """The node that comes immediately after trunk position `idx` (-1 = before
-        the first trunk task) if nothing else intervenes: an explicit gateway pinned
-        to that position takes priority over the next trunk task; with nothing left,
-        flow reaches the shared end event."""
         gw = None
         if idx < 0:
             gw = gateway_by_after_task_id.get(None)
@@ -399,7 +329,6 @@ def _build_graph_from_relations(data, source, currently_resolving):
             "probability": probability
         })
 
-    # --- Task nodes ---
     for pt in process_tasks:
         node_id = _task_node_id(pt)
         task = {
@@ -442,7 +371,6 @@ def _build_graph_from_relations(data, source, currently_resolving):
 
         parsed.tasks.append(task)
 
-    # --- Gateway nodes ---
     for gw in gateways:
         parsed.gateways.append({
             "id": gateway_node_id(gw),
@@ -450,7 +378,6 @@ def _build_graph_from_relations(data, source, currently_resolving):
             "type": (gw.get("gateway_type") or "exclusive").lower()
         })
 
-    # --- Flows: start, plain trunk continuations, and gateway branches ---
     add_flow(START_ID, node_after_trunk_position(-1), 1.0)
 
     for pt in process_tasks:
@@ -459,8 +386,6 @@ def _build_graph_from_relations(data, source, currently_resolving):
 
         pinned_gateway = gateway_by_after_task_id.get(task_id) if task_id is not None else None
         if pinned_gateway is not None:
-            # Flow enters the gateway (probability 1.0); the gateway's own branches
-            # (added below) take over from there.
             add_flow(node_id, gateway_node_id(pinned_gateway), 1.0)
             continue
 
@@ -513,14 +438,10 @@ def _parse_target_process(data, processes_dir, currently_resolving):
         try:
             parsed = parse_bpmn_string(xml)
             if not parsed.tasks:
-                # Parses fine but describes nothing usable -- treat like a missing XML.
                 parsed = None
             else:
                 _enrich_from_relations(parsed, data, processes_dir, currently_resolving)
         except Exception:
-            # bpmn_xml is still under active development server-side and is sometimes
-            # malformed or inconsistent with the relational data -- never let a bad XML
-            # payload take down the whole parse, fall back to the relational data below.
             parsed = None
 
     if parsed is None:
@@ -530,22 +451,6 @@ def _parse_target_process(data, processes_dir, currently_resolving):
 
 
 def parse_target_process(data, processes_dir):
-    """Parse a process dict in the SaaS's relational JSON schema into a ParsedProcess.
-
-    `bpmn_xml`, when present and well-formed, is used as the graph topology source
-    (it's the most precise representation when available), enriched with the
-    relational fields (`process_task`, `gateways[].branches[].probability`,
-    `jobTasks`, `value_classification`, `child_process_id`) for duration/cost/
-    resource/value-add data. But `bpmn_xml` is generated by a system that's still
-    under construction -- it can be missing, null, or malformed -- so whenever it
-    isn't usable, the graph is instead built entirely from `process_task[]` and
-    `gateways[]` (see `_build_graph_from_relations`). Either way the result is a
-    normal ParsedProcess; callers never need to know which path was used.
-
-    `processes_dir` resolves any `child_process_id` subprocess reference -- pass either
-    a directory path (reads `<id>.json` from disk) or a dict already keyed by
-    process_id (an in-memory bundle, e.g. subprocesses fetched from a live API).
-    """
     return _parse_target_process(data, processes_dir, frozenset())
 
 

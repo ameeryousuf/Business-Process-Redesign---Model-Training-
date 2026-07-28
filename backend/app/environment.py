@@ -63,11 +63,6 @@ class ProcessRedesignEnv:
             done = self.step_count >= self.max_steps
             return self._get_state(), -1.0, done, {"reason": "execution_failed"}
 
-        # Heuristic executors only mutate `duration` (they predate the target schema's
-        # finer process/waiting/rework breakdown). processing_time can never legitimately
-        # exceed total duration, so clamp it down whenever an executor reduces duration
-        # below the stored processing_time -- keeps Theoretical Cycle Time structurally
-        # valid even though it can't track the true waiting-vs-processing split per heuristic.
         for task in new_parsed.tasks:
             if "processing_time" in task:
                 task["processing_time"] = min(task["processing_time"], task["duration"])
