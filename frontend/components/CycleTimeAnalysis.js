@@ -48,8 +48,20 @@ function EfficiencyGauge({ pct, delay }) {
   );
 }
 
+function Stat({ label, value }) {
+  return (
+    <div className="text-center">
+      <p className="font-display text-lg font-semibold text-gray-900">{value}</p>
+      <p className="text-[10px] uppercase tracking-wider text-gray-400 mt-0.5">{label}</p>
+    </div>
+  );
+}
+
 function Panel({ label, analysis, accentColor, delay }) {
   const maxHours = Math.max(analysis.cycle_time_hours, analysis.theoretical_cycle_time_hours, 0.01);
+  const cost = analysis.cost_distribution
+    ? analysis.cost_distribution.process_cost + analysis.cost_distribution.rework_cost + analysis.cost_distribution.waiting_cost
+    : null;
 
   return (
     <motion.div
@@ -74,6 +86,15 @@ function Panel({ label, analysis, accentColor, delay }) {
           <Bar label="Theoretical CT" hours={analysis.theoretical_cycle_time_hours} maxHours={maxHours} color="var(--good)" delay={delay + 0.2} />
           <Bar label="Critical Path" hours={analysis.critical_path_hours} maxHours={maxHours} color="var(--slack)" delay={delay + 0.3} />
         </div>
+      </div>
+
+      <div
+        className="grid grid-cols-3 gap-2 mt-6 pt-5 border-t"
+        style={{ borderColor: "var(--panel-border)" }}
+      >
+        <Stat label="Cost" value={cost != null ? `$${cost.toFixed(2)}` : "—"} />
+        <Stat label="Tasks" value={analysis.num_tasks ?? "—"} />
+        <Stat label="Gateways" value={analysis.num_gateways ?? "—"} />
       </div>
     </motion.div>
   );

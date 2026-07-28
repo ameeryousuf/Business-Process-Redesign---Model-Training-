@@ -1,20 +1,72 @@
 "use client";
-import { useState, useRef, Fragment } from "react";
+import { useState, useRef, useEffect, Fragment } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import BpmnDiagram from "@/components/BpmnDiagram";
 import MotionSection from "@/components/MotionSection";
 import CycleTimeAnalysis from "@/components/CycleTimeAnalysis";
 import CriticalPathView from "@/components/CriticalPathView";
 import RaciMatrix from "@/components/RaciMatrix";
+import CostDistributionPie from "@/components/CostDistributionPie";
+import TaskTable from "@/components/TaskTable";
+import RLDetails from "@/components/RLDetails";
+import Tabs from "@/components/Tabs";
+import { runRedesign } from "@/lib/api";
+import { useAuthGuard } from "@/lib/useAuthGuard";
+
+const PENDING_BUNDLE_KEY = "pending_redesign_bundle";
 
 export default function Home() {
+  const authed = useAuthGuard();
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [sourceLabel, setSourceLabel] = useState(null);
   const [expandedStep, setExpandedStep] = useState(null);
+  const [activeResultTab, setActiveResultTab] = useState("flow");
   const fileInputRef = useRef(null);
+
+  // If we arrived here from the Processes list's "Redesign" button, a bundle was
+  // already fetched live (with-relations + BPMN XML + subprocesses) and handed off
+  // via sessionStorage. Pick it up and run the redesign automatically. Gated on
+  // `authed` so an unauthenticated visitor can't trigger a redesign request either.
+  useEffect(() => {
+    if (!authed) return;
+
+    const raw = sessionStorage.getItem(PENDING_BUNDLE_KEY);
+    if (!raw) return;
+
+    sessionStorage.removeItem(PENDING_BUNDLE_KEY);
+
+    let bundle;
+    try {
+      bundle = JSON.parse(raw);
+    } catch (err) {
+      setError("Could not read the fetched process data.");
+      return;
+    }
+
+    setSourceLabel(bundle?.process?.process_name || `Process ${bundle?.process?.process_id ?? ""}`);
+    setLoading(true);
+    setError(null);
+
+    runRedesign(bundle)
+      .then((data) => {
+        if (data.error) {
+          setError(`Backend error: ${data.error}`);
+        } else {
+          setResult(data);
+        }
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [authed]);
+
+  if (!authed) {
+    return null;
+  }
 
   const handleFileSelect = (selectedFile) => {
     if (!selectedFile) return;
@@ -114,6 +166,7 @@ export default function Home() {
     setResult(null);
     setError(null);
     setExpandedStep(null);
+    setSourceLabel(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -135,19 +188,278 @@ export default function Home() {
     setExpandedStep(expandedStep === stepNum ? null : stepNum);
   };
 
+  const resultTabs = result
+    ? [
+        {
+          id: "flow",
+          label: "Flow Analysis",
+          content: (
+            <div className="space-y-6">
+              <div
+                className="rounded-2xl p-7 border card-shadow"
+                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+              >
+                <SectionHeading title="Cycle Time Analysis" subtitle="Cycle Time, Theoretical Cycle Time, Cycle Time Efficiency, Cost — Ch.7.1.1-7.1.2" noMarginTop />
+                <CycleTimeAnalysis asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
+              </div>
+
+              <div
+                className="rounded-2xl p-7 border card-shadow"
+                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+              >
+                <SectionHeading title="Cost Distribution" subtitle="Process vs. rework vs. waiting labor cost" noMarginTop />
+                <CostDistributionPie asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
+              </div>
+
+              <div
+                className="rounded-2xl p-7 border card-shadow"
+                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+              >
+                <SectionHeading title="Task Breakdown" subtitle="Process / rework / waiting time and cost, per task" noMarginTop />
+                <TaskTable asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
+              </div>
+            </div>
+          ),
+        },
+        {
+          id: "critical_path",
+          label: "Critical Path",
+          content: (
+            <div
+              className="rounded-2xl p-7 border card-shadow"
+              style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+            >
+              <SectionHeading title="Critical Path" subtitle="Forward/backward pass (ES, EF, LS, LF) along the dominant path — Ch.7.1.3" noMarginTop />
+              <CriticalPathView asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
+            </div>
+          ),
+        },
+        {
+          id: "raci",
+          label: "RACI Matrix",
+          content: (
+            <div
+              className="rounded-2xl p-7 border card-shadow"
+              style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+            >
+              <SectionHeading title="RACI Matrix" subtitle="Responsible / Accountable / Consulted / Informed, per task" noMarginTop />
+              <RaciMatrix asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
+            </div>
+          ),
+        },
+        {
+          id: "bpmn",
+          label: "BPMN Diagram",
+          content: (
+            <div className="space-y-6">
+              <div
+                className="rounded-2xl p-7 border card-shadow"
+                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <p
+                    className="font-mono text-xs uppercase tracking-widest px-2.5 py-1 rounded-md"
+                    style={{ color: "var(--baseline)", background: "var(--baseline-soft)" }}
+                  >
+                    AS-IS
+                  </p>
+                </div>
+                <BpmnDiagram xml={result.as_is_bpmn_xml} height={520} />
+              </div>
+
+              <div
+                className="rounded-2xl p-7 border card-shadow"
+                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <p
+                    className="font-mono text-xs uppercase tracking-widest px-2.5 py-1 rounded-md"
+                    style={{ color: "var(--good)", background: "var(--good-soft)" }}
+                  >
+                    TO-BE
+                  </p>
+                  <button
+                    onClick={handleDownloadToBe}
+                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-md font-medium transition-colors"
+                  >
+                    Download BPMN
+                  </button>
+                </div>
+                <BpmnDiagram xml={result.to_be_bpmn_xml} height={520} />
+              </div>
+            </div>
+          ),
+        },
+        {
+          id: "trace",
+          label: "Redesign Trace",
+          content: (
+            <div
+              className="rounded-2xl p-7 border overflow-x-auto card-shadow"
+              style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
+            >
+              <SectionHeading title="Redesign Trace" subtitle="Each heuristic the agent applied, in order" noMarginTop />
+
+              <table className="w-full border-collapse min-w-[760px] mt-2">
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--panel-border)" }}>
+                    <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4 w-10">
+                      #
+                    </th>
+                    <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
+                      Action
+                    </th>
+                    <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
+                      Applied To
+                    </th>
+                    <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
+                      Time
+                    </th>
+                    <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
+                      Cost
+                    </th>
+                    <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 w-16">
+                      Why
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.redesign_trace.map((step, idx) => (
+                    <Fragment key={step.step}>
+                      <motion.tr
+                        initial={{ opacity: 0 }}
+                        whileInView={{ opacity: 1 }}
+                        viewport={{ once: true }}
+                        transition={{ duration: 0.3, delay: idx * 0.05 }}
+                        style={{
+                          borderBottom:
+                            expandedStep === step.step
+                              ? "none"
+                              : idx !== result.redesign_trace.length - 1
+                                ? "1px solid var(--panel-border)"
+                                : "none",
+                        }}
+                      >
+                        <td className="py-3.5 pr-4 font-mono text-xs text-gray-300 align-top">
+                          {String(step.step).padStart(2, "0")}
+                        </td>
+                        <td className="py-3.5 pr-4 align-top">
+                          <span
+                            className="inline-block text-xs font-medium px-2.5 py-1 rounded-md"
+                            style={{ color: "var(--accent)", background: "var(--accent-soft)" }}
+                          >
+                            {step.heuristic}
+                          </span>
+                        </td>
+                        <td className="py-3.5 pr-4 text-sm text-gray-700 align-top">
+                          {step.applied_to}
+                        </td>
+                        <td className="py-3.5 pr-4 text-right align-top">
+                          <div className="font-mono text-sm text-gray-900">
+                            {step.time_before}h → {step.time_after}h
+                          </div>
+                          {step.time_delta_pct !== 0 && (
+                            <div
+                              className="text-xs font-mono"
+                              style={{ color: step.time_delta_pct > 0 ? "var(--good)" : "var(--critical)" }}
+                            >
+                              {step.time_delta_pct > 0 ? "−" : "+"}
+                              {Math.abs(step.time_delta_pct)}%
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 pr-4 text-right align-top">
+                          <div className="font-mono text-sm text-gray-900">
+                            ${step.cost_before} → ${step.cost_after}
+                          </div>
+                          {step.cost_delta_pct !== 0 && (
+                            <div
+                              className="text-xs font-mono"
+                              style={{ color: step.cost_delta_pct > 0 ? "var(--good)" : "var(--critical)" }}
+                            >
+                              {step.cost_delta_pct > 0 ? "−" : "+"}
+                              {Math.abs(step.cost_delta_pct)}%
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 text-right align-top">
+                          <button
+                            onClick={() => toggleStep(step.step)}
+                            className="text-xs font-medium px-2.5 py-1 rounded-md hover:bg-gray-100 transition-colors"
+                            style={{ color: "var(--accent)" }}
+                          >
+                            {expandedStep === step.step ? "Hide" : "Show"}
+                          </button>
+                        </td>
+                      </motion.tr>
+                      <AnimatePresence>
+                        {expandedStep === step.step && (
+                          <motion.tr
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            style={{
+                              borderBottom:
+                                idx !== result.redesign_trace.length - 1
+                                  ? "1px solid var(--panel-border)"
+                                  : "none",
+                            }}
+                          >
+                            <td></td>
+                            <td colSpan={5} className="pb-4 pr-4">
+                              <div
+                                className="text-sm text-gray-600 leading-relaxed p-4 rounded-lg"
+                                style={{ background: "var(--accent-soft)" }}
+                              >
+                                {step.reason}
+                              </div>
+                            </td>
+                          </motion.tr>
+                        )}
+                      </AnimatePresence>
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+
+              <p
+                className="text-xs text-gray-400 mt-5 pt-4 italic"
+                style={{ borderTop: "1px solid var(--panel-border)" }}
+              >
+                {result.stopping_reason}
+              </p>
+            </div>
+          ),
+        },
+        {
+          id: "rl_details",
+          label: "RL Details",
+          content: <RLDetails rlDetails={result.rl_details} trace={result.redesign_trace} />,
+        },
+      ]
+    : [];
+
   return (
     <main className="min-h-screen">
       {/* Hero */}
       <div className="border-b" style={{ borderColor: "var(--panel-border)" }}>
         <div className="px-6 md:px-16 py-14 md:py-20">
-          <motion.p
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="font-mono text-xs uppercase tracking-[0.2em] text-gray-400 mb-4"
-          >
-            RL-Driven Process Optimization
-          </motion.p>
+          <div className="flex items-center justify-between mb-4">
+            <motion.p
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              className="font-mono text-xs uppercase tracking-[0.2em] text-gray-400"
+            >
+              RL-Driven Process Optimization
+            </motion.p>
+            <Link
+              href="/processes"
+              className="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2"
+            >
+              ← Back to Processes
+            </Link>
+          </div>
           <motion.h1
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -170,6 +482,25 @@ export default function Home() {
       </div>
 
       <div className="px-6 md:px-16 py-10 space-y-6 max-w-6xl mx-auto">
+        {sourceLabel && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-xl border p-4 flex items-center justify-between"
+            style={{ background: "var(--accent-soft)", borderColor: "var(--panel-border)" }}
+          >
+            <p className="text-sm text-gray-700">
+              <span className="font-medium">Loaded live from Digital Twin Server:</span> {sourceLabel}
+            </p>
+            <button
+              onClick={handleReset}
+              className="text-xs text-gray-500 hover:text-gray-700 underline underline-offset-2"
+            >
+              Upload a file instead
+            </button>
+          </motion.div>
+        )}
+
         {/* Upload zone */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -268,6 +599,9 @@ export default function Home() {
                     after={result.to_be.total_time_hours}
                     unit="h"
                     pct={result.improvement.time_reduction_percent}
+                    showMinutes
+                    minutesBefore={result.as_is.total_time_minutes}
+                    minutesAfter={result.to_be.total_time_minutes}
                   />
                   <DeltaRow
                     label="Cost"
@@ -276,223 +610,14 @@ export default function Home() {
                     unit="$"
                     pct={result.improvement.cost_reduction_percent}
                     prefixUnit
+                    caption={result.currency === "generic_units" ? "synthetic unit-rates, not real currency" : null}
                   />
                 </div>
               </div>
             </MotionSection>
 
-            {/* Cycle time analysis */}
-            {result.as_is_analysis && (
-              <MotionSection delay={0.05}>
-                <SectionHeading title="Cycle Time Analysis" subtitle="Cycle Time, Theoretical Cycle Time & Efficiency — Ch.7.1.1-7.1.2" />
-                <CycleTimeAnalysis asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
-              </MotionSection>
-            )}
-
-            {/* Critical path */}
-            {result.as_is_analysis && (
-              <MotionSection delay={0.05}>
-                <div
-                  className="rounded-2xl p-7 border card-shadow"
-                  style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
-                >
-                  <SectionHeading title="Critical Path" subtitle="Forward/backward pass (ES, EF, LS, LF) along the dominant path — Ch.7.1.3" noMarginTop />
-                  <CriticalPathView asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
-                </div>
-              </MotionSection>
-            )}
-
-            {/* RACI matrix */}
-            {result.as_is_analysis && (
-              <MotionSection delay={0.05}>
-                <div
-                  className="rounded-2xl p-7 border card-shadow"
-                  style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
-                >
-                  <SectionHeading title="RACI Matrix" subtitle="Responsible / Accountable / Consulted / Informed, per task" noMarginTop />
-                  <RaciMatrix asIs={result.as_is_analysis} toBe={result.to_be_analysis} />
-                </div>
-              </MotionSection>
-            )}
-
-            {/* Diagrams */}
             <MotionSection delay={0.05}>
-              <div
-                className="rounded-2xl p-7 border card-shadow"
-                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <p
-                    className="font-mono text-xs uppercase tracking-widest px-2.5 py-1 rounded-md"
-                    style={{ color: "var(--baseline)", background: "var(--baseline-soft)" }}
-                  >
-                    AS-IS
-                  </p>
-                </div>
-                <BpmnDiagram xml={result.as_is_bpmn_xml} height={520} />
-              </div>
-            </MotionSection>
-
-            <MotionSection delay={0.05}>
-              <div
-                className="rounded-2xl p-7 border card-shadow"
-                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <p
-                    className="font-mono text-xs uppercase tracking-widest px-2.5 py-1 rounded-md"
-                    style={{ color: "var(--good)", background: "var(--good-soft)" }}
-                  >
-                    TO-BE
-                  </p>
-                  <button
-                    onClick={handleDownloadToBe}
-                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-md font-medium transition-colors"
-                  >
-                    Download BPMN
-                  </button>
-                </div>
-                <BpmnDiagram xml={result.to_be_bpmn_xml} height={520} />
-              </div>
-            </MotionSection>
-
-            {/* Redesign trace */}
-            <MotionSection delay={0.05}>
-              <div
-                className="rounded-2xl p-7 border overflow-x-auto card-shadow"
-                style={{ background: "var(--panel-bg)", borderColor: "var(--panel-border)" }}
-              >
-                <SectionHeading title="Redesign Trace" subtitle="Each heuristic the agent applied, in order" noMarginTop />
-
-                <table className="w-full border-collapse min-w-[760px] mt-2">
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid var(--panel-border)" }}>
-                      <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4 w-10">
-                        #
-                      </th>
-                      <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
-                        Action
-                      </th>
-                      <th className="text-left text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
-                        Applied To
-                      </th>
-                      <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
-                        Time
-                      </th>
-                      <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 pr-4">
-                        Cost
-                      </th>
-                      <th className="text-right text-xs uppercase tracking-wider text-gray-400 font-medium pb-3 w-16">
-                        Why
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.redesign_trace.map((step, idx) => (
-                      <Fragment key={step.step}>
-                        <motion.tr
-                          initial={{ opacity: 0 }}
-                          whileInView={{ opacity: 1 }}
-                          viewport={{ once: true }}
-                          transition={{ duration: 0.3, delay: idx * 0.05 }}
-                          style={{
-                            borderBottom:
-                              expandedStep === step.step
-                                ? "none"
-                                : idx !== result.redesign_trace.length - 1
-                                  ? "1px solid var(--panel-border)"
-                                  : "none",
-                          }}
-                        >
-                          <td className="py-3.5 pr-4 font-mono text-xs text-gray-300 align-top">
-                            {String(step.step).padStart(2, "0")}
-                          </td>
-                          <td className="py-3.5 pr-4 align-top">
-                            <span
-                              className="inline-block text-xs font-medium px-2.5 py-1 rounded-md"
-                              style={{ color: "var(--accent)", background: "var(--accent-soft)" }}
-                            >
-                              {step.heuristic}
-                            </span>
-                          </td>
-                          <td className="py-3.5 pr-4 text-sm text-gray-700 align-top">
-                            {step.applied_to}
-                          </td>
-                          <td className="py-3.5 pr-4 text-right align-top">
-                            <div className="font-mono text-sm text-gray-900">
-                              {step.time_before}h → {step.time_after}h
-                            </div>
-                            {step.time_delta_pct !== 0 && (
-                              <div
-                                className="text-xs font-mono"
-                                style={{ color: step.time_delta_pct > 0 ? "var(--good)" : "var(--critical)" }}
-                              >
-                                {step.time_delta_pct > 0 ? "−" : "+"}
-                                {Math.abs(step.time_delta_pct)}%
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-3.5 pr-4 text-right align-top">
-                            <div className="font-mono text-sm text-gray-900">
-                              ${step.cost_before} → ${step.cost_after}
-                            </div>
-                            {step.cost_delta_pct !== 0 && (
-                              <div
-                                className="text-xs font-mono"
-                                style={{ color: step.cost_delta_pct > 0 ? "var(--good)" : "var(--critical)" }}
-                              >
-                                {step.cost_delta_pct > 0 ? "−" : "+"}
-                                {Math.abs(step.cost_delta_pct)}%
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-3.5 text-right align-top">
-                            <button
-                              onClick={() => toggleStep(step.step)}
-                              className="text-xs font-medium px-2.5 py-1 rounded-md hover:bg-gray-100 transition-colors"
-                              style={{ color: "var(--accent)" }}
-                            >
-                              {expandedStep === step.step ? "Hide" : "Show"}
-                            </button>
-                          </td>
-                        </motion.tr>
-                        <AnimatePresence>
-                          {expandedStep === step.step && (
-                            <motion.tr
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              exit={{ opacity: 0 }}
-                              style={{
-                                borderBottom:
-                                  idx !== result.redesign_trace.length - 1
-                                    ? "1px solid var(--panel-border)"
-                                    : "none",
-                              }}
-                            >
-                              <td></td>
-                              <td colSpan={5} className="pb-4 pr-4">
-                                <div
-                                  className="text-sm text-gray-600 leading-relaxed p-4 rounded-lg"
-                                  style={{ background: "var(--accent-soft)" }}
-                                >
-                                  {step.reason}
-                                </div>
-                              </td>
-                            </motion.tr>
-                          )}
-                        </AnimatePresence>
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
-
-                <p
-                  className="text-xs text-gray-400 mt-5 pt-4 italic"
-                  style={{ borderTop: "1px solid var(--panel-border)" }}
-                >
-                  {result.stopping_reason}
-                </p>
-              </div>
+              <Tabs key={activeResultTab} tabs={resultTabs} active={activeResultTab} onActiveChange={setActiveResultTab} />
             </MotionSection>
           </div>
         )}
@@ -510,12 +635,17 @@ function SectionHeading({ title, subtitle, noMarginTop }) {
   );
 }
 
-function DeltaRow({ label, before, after, unit, pct, prefixUnit }) {
+function DeltaRow({ label, before, after, unit, pct, prefixUnit, showMinutes, caption, minutesBefore, minutesAfter }) {
   const format = (val) => (prefixUnit ? `${unit}${val}` : `${val}${unit}`);
+  const fmtMinutes = (hours, minutes) =>
+    (minutes != null ? Math.round(minutes) : Math.round(hours * 60)).toLocaleString();
 
   return (
     <div>
-      <p className="text-xs uppercase tracking-widest text-gray-400 mb-2.5">{label}</p>
+      <p className="text-xs uppercase tracking-widest text-gray-400 mb-2.5">
+        {label}
+        {caption && <span className="normal-case tracking-normal text-gray-300"> · {caption}</span>}
+      </p>
       <div className="flex items-center gap-3 flex-wrap">
         <span className="font-mono text-2xl" style={{ color: "var(--baseline)" }}>
           {format(before)}
@@ -533,6 +663,11 @@ function DeltaRow({ label, before, after, unit, pct, prefixUnit }) {
           −{pct}%
         </span>
       </div>
+      {showMinutes && (
+        <p className="font-mono text-xs text-gray-400 mt-1.5">
+          {fmtMinutes(before, minutesBefore)} min → {fmtMinutes(after, minutesAfter)} min
+        </p>
+      )}
     </div>
   );
 }

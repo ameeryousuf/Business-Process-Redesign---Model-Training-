@@ -54,16 +54,30 @@ async def redesign(file: UploadFile = File(...)):
 
 
 @app.post("/redesign/process")
-async def redesign_process_json(data: dict = Body(...)):
-    """Accepts a process in the SaaS's own relational JSON schema (the same shape as
-    processes/<id>.json) and returns the as-is/to-be comparison + redesign trace.
-    Any child_process_id reference is resolved by looking up <PROCESSES_DIR>/<id>.json.
+async def redesign_process_json(body: dict = Body(...)):
+    """Accepts a process in the SaaS's own relational JSON schema. Two request shapes
+    are supported:
+
+    1. Bundle shape (used by the live-fetching frontend): {"process": {...},
+       "subprocesses": {"<child_process_id>": {...}, ...}} -- every child_process_id
+       the main process references (recursively) is pre-fetched by the caller and
+       bundled here, so no backend API credentials are needed for subprocess resolution.
+    2. Flat shape (local dev / testing): the process dict directly, matching
+       processes/<id>.json -- subprocess references fall back to looking up
+       <PROCESSES_DIR>/<id>.json on disk.
     """
     if target_schema_q_table is None:
         return {"error": "Target-schema model is not trained yet (missing trained_q_table_target_schema.pkl)."}
 
+    if "process" in body and "subprocesses" in body:
+        data = body["process"]
+        subprocess_source = {int(k): v for k, v in body["subprocesses"].items()}
+    else:
+        data = body
+        subprocess_source = PROCESSES_DIR
+
     try:
-        result = redesign_target_process(data, PROCESSES_DIR, target_schema_q_table)
+        result = redesign_target_process(data, subprocess_source, target_schema_q_table)
         return result
     except SubprocessNotFoundError as e:
         return {"error": str(e)}

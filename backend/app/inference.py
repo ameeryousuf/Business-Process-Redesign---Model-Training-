@@ -6,7 +6,7 @@ from app.translator import translate_names
 from app.synthetic_metrics import enrich_process
 from app.metrics_calculator import calculate_metrics, calculate_theoretical_metrics, calculate_cycle_time_efficiency
 from app.state_builder import build_state, HEURISTIC_ORDER
-from app.environment import ProcessRedesignEnv
+from app.environment import ProcessRedesignEnv, IMPLAUSIBLE_REWARD_THRESHOLD
 from app.bpmn_writer import parsed_to_bpmn_xml
 from app.heuristics.registry import HEURISTIC_LABELS
 from app.critical_path import compute_critical_path
@@ -14,6 +14,48 @@ from app.critical_path import compute_critical_path
 MODEL_PATH = "data/trained_q_table.pkl"
 MIN_IMPROVEMENT_THRESHOLD = 0.02
 DEFAULT_SEED = 42
+
+# Training configuration the shipped Q-tables were produced with (see
+# app/q_learning_agent.py defaults and app/train_target_schema.py::NUM_EPISODES) --
+# descriptive only, surfaced to the frontend's "RL Details" tab so the agent's
+# behavior isn't a black box. If the model is ever retrained with different values,
+# update these to match.
+RL_HYPERPARAMETERS = {
+    "learning_rate_alpha": 0.1,
+    "discount_factor_gamma": 0.9,
+    "epsilon_start": 1.0,
+    "epsilon_end": 0.05,
+    "epsilon_decay_fraction_of_episodes": 0.8,
+    "training_episodes": 5000
+}
+
+RL_REWARD_FUNCTION = {
+    "formula": "reward = 0.5 * time_improvement_fraction + 0.5 * cost_improvement_fraction",
+    "description": (
+        "time_improvement_fraction and cost_improvement_fraction are each "
+        "(old - new) / old for total cycle time and total cost respectively -- "
+        "positive when the heuristic improves the process, negative when it makes "
+        "it worse. The two are weighted equally so the agent doesn't over-optimize "
+        "one dimension at the other's expense."
+    ),
+    "rejection_rule": (
+        f"A step is rejected (treated as if it were never applied) if its reward "
+        f"would fall below {IMPLAUSIBLE_REWARD_THRESHOLD} -- a small tolerance for "
+        f"noise, but anything worse is assumed to be an implausible/incorrect result "
+        f"rather than a genuine trade-off worth taking."
+    )
+}
+
+RL_UPDATE_RULE = "Q(s,a) <- Q(s,a) + alpha * (reward + gamma * max_a' Q(s',a') - Q(s,a))"
+
+
+def _describe_state(state):
+    time_bucket, cost_bucket = state[0], state[1]
+    eligibility_bits = state[2:]
+    eligible = [
+        HEURISTIC_LABELS[name] for name, bit in zip(HEURISTIC_ORDER, eligibility_bits) if bit
+    ]
+    return {"time_bucket": time_bucket, "cost_bucket": cost_bucket, "eligible_heuristics": eligible}
 
 def _already_has_baked_metrics(parsed):
     if not parsed.tasks:
@@ -23,11 +65,12 @@ def _already_has_baked_metrics(parsed):
 
 def _analysis_snapshot(parsed):
     """Cycle Time, Theoretical Cycle Time, Cycle Time Efficiency (Ch.7.1.1-7.1.2),
-    the Critical Path (Ch.7.1.3), and the RACI matrix for the process's current state.
+    the Critical Path (Ch.7.1.3), the RACI matrix, cost distribution, and a per-task
+    time/cost breakdown for the process's current state.
     """
     metrics = calculate_metrics(parsed)
     theoretical = calculate_theoretical_metrics(parsed)
-    cte = calculate_cycle_time_efficiency(metrics["total_time_hours"], theoretical["theoretical_time_hours"])
+    cte = calculate_cycle_time_efficiency(metrics["total_time_minutes"], theoretical["theoretical_time_minutes"])
     critical_path = compute_critical_path(parsed)
 
     raci_matrix = [
@@ -40,13 +83,44 @@ def _analysis_snapshot(parsed):
         for t in parsed.tasks
     ]
 
+    # Cost distribution: process-time labor cost vs. rework-time labor cost. Waiting
+    # time is always $0 by definition of the cost model (labor cost only accrues
+    # during active work), so it's included as an explicit, always-zero category
+    # rather than omitted -- that's a real, documented property of the model, not a
+    # gap in the data.
+    rework_cost = calculate_metrics(parsed, cost_field="rework_cost")["total_cost_usd"]
+    process_cost = round(metrics["total_cost_usd"] - rework_cost, 2)
+    cost_distribution = {
+        "process_cost": process_cost,
+        "rework_cost": rework_cost,
+        "waiting_cost": 0.0
+    }
+
+    tasks_table = [
+        {
+            "task_id": t["id"],
+            "name": t.get("name") or t["id"],
+            "is_subprocess": bool(t.get("is_subprocess")),
+            "duration_hours": round(t.get("duration", 0.0), 3),
+            "process_time_hours": round(t.get("processing_time", 0.0), 3),
+            "rework_time_hours": round(t.get("rework_time_hours", 0.0), 3),
+            "waiting_time_hours": round(t.get("waiting_time_hours", 0.0), 3),
+            "cost": t.get("cost", 0.0)
+        }
+        for t in parsed.tasks
+    ]
+
     return {
         "cycle_time_hours": metrics["total_time_hours"],
         "theoretical_cycle_time_hours": theoretical["theoretical_time_hours"],
         "cycle_time_efficiency": cte,
         "critical_path": critical_path["critical_path"],
         "critical_path_hours": critical_path["critical_path_hours"],
-        "raci_matrix": raci_matrix
+        "raci_matrix": raci_matrix,
+        "num_tasks": len(parsed.tasks),
+        "num_gateways": len(parsed.gateways),
+        "cost_distribution": cost_distribution,
+        "tasks": tasks_table
     }
 
 
@@ -215,7 +289,7 @@ def pick_best_action(q_table, state, eligible_actions):
     return best[0]
 
 
-def _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold):
+def _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold, currency_code="generic_units"):
     as_is_xml = parsed_to_bpmn_xml(enriched, process_id="Process_AsIs")
     as_is_analysis = _analysis_snapshot(enriched)
 
@@ -296,6 +370,20 @@ def _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold):
                 (metrics_before["total_cost_usd"] - metrics_after["total_cost_usd"]) / metrics_before["total_cost_usd"] * 100, 1
             )
 
+        q_values_at_decision = sorted(
+            (
+                {
+                    "action": a,
+                    "label": HEURISTIC_LABELS[a],
+                    "q_value": round(q_table.get((state, a), 0.0), 4),
+                    "chosen": a == action
+                }
+                for a in eligible_actions
+            ),
+            key=lambda entry: entry["q_value"],
+            reverse=True
+        )
+
         trace.append({
             "step": step_num,
             "heuristic": HEURISTIC_LABELS[action],
@@ -306,7 +394,9 @@ def _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold):
             "cost_before": metrics_before["total_cost_usd"],
             "cost_after": metrics_after["total_cost_usd"],
             "time_delta_pct": time_delta_pct,
-            "cost_delta_pct": cost_delta_pct
+            "cost_delta_pct": cost_delta_pct,
+            "state": _describe_state(state),
+            "q_values": q_values_at_decision
         })
 
         state = next_state
@@ -344,7 +434,27 @@ def _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold):
         "as_is_bpmn_xml": as_is_xml,
         "to_be_bpmn_xml": to_be_xml,
         "as_is_analysis": as_is_analysis,
-        "to_be_analysis": to_be_analysis
+        "to_be_analysis": to_be_analysis,
+        "currency": currency_code,
+        "rl_details": {
+            "algorithm": "Tabular Q-Learning (epsilon-greedy action selection, off-policy TD control)",
+            "state_space": {
+                "description": (
+                    "(time_bucket, cost_bucket, eligibility_bit_1, ..., eligibility_bit_10) -- "
+                    "3 time buckets x 3 cost buckets x 2^10 eligibility combinations = 9,216 "
+                    "possible states, though only a fraction are ever reached during training."
+                ),
+                "time_buckets": ["low", "medium", "high"],
+                "cost_buckets": ["low", "medium", "high"]
+            },
+            "action_space": [
+                {"action": name, "label": HEURISTIC_LABELS[name]} for name in HEURISTIC_ORDER
+            ],
+            "reward_function": RL_REWARD_FUNCTION,
+            "update_rule": RL_UPDATE_RULE,
+            "hyperparameters": RL_HYPERPARAMETERS,
+            "q_table_size": len(q_table)
+        }
     }
 
 
@@ -363,7 +473,10 @@ def redesign_process(bpmn_path, q_table, max_steps=10,
     env = ProcessRedesignEnv(bpmn_path, time_low=time_low, time_high=time_high,
                               cost_low=cost_low, cost_high=cost_high, max_steps=max_steps)
 
-    return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold)
+    # Legacy BPMN pipeline uses arbitrary synthetic unit-rates (see synthetic_metrics.py),
+    # not a real currency -- label it as such rather than implying a real-world value.
+    return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold,
+                          currency_code="generic_units")
 
 
 def redesign_target_process(data, processes_dir, q_table, max_steps=10,
@@ -385,7 +498,9 @@ def redesign_target_process(data, processes_dir, q_table, max_steps=10,
                               cost_low=cost_low, cost_high=cost_high, max_steps=max_steps,
                               parser_fn=_parser_fn)
 
-    return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold)
+    # All costs are converted to USD at parse time (see app/currency.py).
+    return _run_redesign(env, enriched, q_table, max_steps, min_improvement_threshold,
+                          currency_code="USD")
 
 
 if __name__ == "__main__":

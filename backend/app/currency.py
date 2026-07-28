@@ -23,6 +23,27 @@ def _fetch_usd_rates():
     return rates
 
 
+def convert_to_usd(amount, from_currency):
+    """rateUSD_e = hourlyRate_e / currencyRate_e, per the cost-model spec -- the API's
+    rates table is already USD-based (rates[X] = units of X per 1 USD), so converting
+    to USD is a direct division, no PKR double-hop needed.
+    """
+    if amount is None:
+        return None
+
+    currency = (from_currency or "USD").upper()
+
+    if currency == "USD":
+        return amount
+
+    rates = _fetch_usd_rates()
+
+    if currency not in rates:
+        raise ValueError(f"Unsupported currency '{currency}': not found in exchange rate API response")
+
+    return amount / rates[currency]
+
+
 def convert_to_pkr(amount, from_currency):
     if amount is None:
         return None
@@ -49,5 +70,6 @@ def convert_to_pkr(amount, from_currency):
 
 
 if __name__ == "__main__":
+    print("100 PKR ->", convert_to_usd(100, "PKR"), "USD")
+    print("100 USD ->", convert_to_usd(100, "USD"), "USD")
     print("100 USD ->", convert_to_pkr(100, "USD"), "PKR")
-    print("100 PKR ->", convert_to_pkr(100, "PKR"), "PKR")

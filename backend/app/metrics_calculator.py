@@ -51,6 +51,18 @@ def find_parallel_join(split_id, graph, gateway_type_lookup):
 
 MAX_INCLUSIVE_SUBSET_ENUMERATION_BRANCHES = 16
 
+# INCLUSIVE gateway treatment: the textbook (Dumas et al. Ch.7) never actually gives a
+# closed-form formula for true concurrent-branch OR gateways -- only XOR-blocks. To keep
+# every manual/hand calculation against the book's formulas exactly reproducible by this
+# engine, INCLUSIVE gateways are treated the same as EXCLUSIVE (plain weighted average,
+# exactly one branch per instance) by default. Set to True to use the literature-general
+# case instead (independent per-branch activation via subset enumeration).
+USE_TRUE_OR_SEMANTICS_FOR_INCLUSIVE = False
+
+
+def _task_cost(task, cost_field):
+    return task.get(cost_field, 0.0) if task else 0.0
+
 
 def _expected_inclusive_group(branch_times, branch_costs, branch_probs):
     """True OR-split/OR-join semantics: each branch activates independently with its
@@ -101,13 +113,26 @@ def _expected_inclusive_group(branch_times, branch_costs, branch_probs):
     return expected_time, expected_cost
 
 
-def calculate_metrics(parsed, time_field="duration"):
+def calculate_metrics(parsed, time_field="duration", cost_field="cost"):
     graph = build_graph(parsed)
     task_lookup = build_task_lookup(parsed)
     gateway_type_lookup = build_gateway_type_lookup(parsed)
 
     def task_time(task):
-        return task.get(time_field, task.get("duration", 0.0))
+        if time_field in task:
+            return task[time_field]
+        # "processing_time" is the one field allowed to fall back to full duration --
+        # that's the legacy (raw BPMN upload) pipeline's way of saying "no separate
+        # waiting/rework breakdown available, treat all time as processing time".
+        # Newer breakdown fields (waiting_time_hours, rework_time_hours) must default
+        # to 0 instead, or a task missing one would silently inherit its ENTIRE
+        # duration into that bucket.
+        if time_field == "processing_time":
+            return task.get("duration", 0.0)
+        return 0.0
+
+    def task_cost(task):
+        return _task_cost(task, cost_field)
 
     start_id = parsed.start_events[0]["id"]
     visited_parallel_groups = set()
@@ -141,7 +166,7 @@ def calculate_metrics(parsed, time_field="duration"):
                     target_id = flow["target"]
                     task = task_lookup.get(target_id)
                     t_time = task_time(task) if task else 0.0
-                    t_cost = task["cost"] if task else 0.0
+                    t_cost = task_cost(task) if task else 0.0
 
                     if target_id == join_id:
                         down_t, down_c = 0.0, 0.0
@@ -158,7 +183,8 @@ def calculate_metrics(parsed, time_field="duration"):
 
                 return group_time + down_time, group_cost + down_cost
 
-        if gtype == "inclusive" and len(outgoing) > 1 and node_id not in visited_real_splits:
+        if (USE_TRUE_OR_SEMANTICS_FOR_INCLUSIVE and gtype == "inclusive"
+                and len(outgoing) > 1 and node_id not in visited_real_splits):
             join_id = find_parallel_join(node_id, graph, gateway_type_lookup)
 
             if join_id is not None:
@@ -172,7 +198,7 @@ def calculate_metrics(parsed, time_field="duration"):
                     target_id = flow["target"]
                     task = task_lookup.get(target_id)
                     t_time = task_time(task) if task else 0.0
-                    t_cost = task["cost"] if task else 0.0
+                    t_cost = task_cost(task) if task else 0.0
 
                     if target_id == join_id:
                         down_t, down_c = 0.0, 0.0
@@ -215,7 +241,7 @@ def calculate_metrics(parsed, time_field="duration"):
                 ]
 
                 group_time = max(task_time(t) for t in sibling_tasks)
-                group_cost = sum(t["cost"] for t in sibling_tasks)
+                group_cost = sum(task_cost(t) for t in sibling_tasks)
 
                 downstream_time, downstream_cost = traverse(group_id, path_visited, stop_id=stop_id)
 
@@ -225,15 +251,15 @@ def calculate_metrics(parsed, time_field="duration"):
 
             if task:
                 t_time = task_time(task)
-                task_cost = task["cost"]
+                t_cost = task_cost(task)
             else:
                 t_time = 0.0
-                task_cost = 0.0
+                t_cost = 0.0
 
             downstream_time, downstream_cost = traverse(target_id, path_visited, stop_id=stop_id)
 
             total_time += flow_prob * (t_time + downstream_time)
-            total_cost += flow_prob * (task_cost + downstream_cost)
+            total_cost += flow_prob * (t_cost + downstream_cost)
 
         return total_time, total_cost
 
@@ -241,6 +267,7 @@ def calculate_metrics(parsed, time_field="duration"):
 
     return {
         "total_time_hours": round(total_time, 2),
+        "total_time_minutes": round(total_time * 60, 2),
         "total_cost_usd": round(total_cost, 2)
     }
 
@@ -252,14 +279,24 @@ def calculate_theoretical_metrics(parsed):
     field (e.g. the legacy BPMN pipeline, which has no separate waiting-time concept).
     """
     result = calculate_metrics(parsed, time_field="processing_time")
-    return {"theoretical_time_hours": result["total_time_hours"]}
+    return {
+        "theoretical_time_hours": result["total_time_hours"],
+        "theoretical_time_minutes": result["total_time_minutes"]
+    }
 
 
-def calculate_cycle_time_efficiency(cycle_time_hours, theoretical_time_hours):
-    """CTE = TCT / CT, per Eq. 7.5. Returned as a 0-1 ratio (not a percentage)."""
-    if cycle_time_hours <= 0:
+def calculate_cycle_time_efficiency(cycle_time_minutes, theoretical_time_minutes):
+    """CTE = TCT / CT, per Eq. 7.5. Returned as a 0-1 ratio (not a percentage).
+
+    Takes minutes (not hours) even though both are already-rounded fields off the
+    metrics dicts -- hours are rounded to 2 decimals (~0.6min resolution), which is
+    coarse enough to shift the ratio's 2nd significant digit (e.g. 19.09% vs the
+    correct 19.11%). Minutes are rounded to 2 decimals too, but that is 60x finer,
+    so the double-rounding error stays well below the displayed precision.
+    """
+    if cycle_time_minutes <= 0:
         return 0.0
-    return round(theoretical_time_hours / cycle_time_hours, 4)
+    return round(theoretical_time_minutes / cycle_time_minutes, 4)
 
 
 if __name__ == "__main__":
