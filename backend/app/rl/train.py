@@ -4,9 +4,9 @@ import random
 import pickle
 
 from app.bpmn_parser import parse_bpmn
-from app.environment import ProcessRedesignEnv
-from app.q_learning_agent import QLearningAgent
-from app.state_builder import HEURISTIC_ORDER
+from app.rl.environment import ProcessRedesignEnv
+from app.rl.q_learning_agent import QLearningAgent
+from app.rl.state_builder import HEURISTIC_ORDER
 
 DATASET_DIR = "data/target_training"
 NUM_EPISODES = 5000

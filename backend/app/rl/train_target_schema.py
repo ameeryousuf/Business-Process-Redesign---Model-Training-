@@ -1,10 +1,10 @@
 import functools
 
-from app.train import run_training, save_agent
+from app.rl.train import run_training, save_agent
 from app.target_schema_parser import parse_target_process_file
 
 DATASET_DIR = "data/target_training"
-MODEL_OUTPUT_PATH = "data/trained_q_table_target_schema.pkl"
+MODEL_OUTPUT_PATH = "app/rl/model/trained_q_table_target_schema.pkl"
 NUM_EPISODES = 5000
 
 

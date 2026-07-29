@@ -1,12 +1,12 @@
 import copy
 import pickle
 
-from app.metrics_calculator import calculate_metrics, calculate_theoretical_metrics, calculate_cycle_time_efficiency
-from app.state_builder import build_state, HEURISTIC_ORDER
-from app.environment import ProcessRedesignEnv, IMPLAUSIBLE_REWARD_THRESHOLD
+from app.utils.metrics_calculator import calculate_metrics, calculate_theoretical_metrics, calculate_cycle_time_efficiency
+from app.rl.state_builder import build_state, HEURISTIC_ORDER
+from app.rl.environment import ProcessRedesignEnv, IMPLAUSIBLE_REWARD_THRESHOLD
 from app.bpmn_writer import parsed_to_bpmn_xml
 from app.heuristics.registry import HEURISTIC_LABELS
-from app.critical_path import compute_critical_path
+from app.utils.critical_path import compute_critical_path
 
 MIN_IMPROVEMENT_THRESHOLD = 0.02
 

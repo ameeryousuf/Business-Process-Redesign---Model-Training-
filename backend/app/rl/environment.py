@@ -1,7 +1,7 @@
 import copy
 from app.bpmn_parser import parse_bpmn
-from app.metrics_calculator import calculate_metrics
-from app.state_builder import build_state, HEURISTIC_ORDER
+from app.utils.metrics_calculator import calculate_metrics
+from app.rl.state_builder import build_state, HEURISTIC_ORDER
 from app.heuristics.registry import EXECUTORS
 
 IMPLAUSIBLE_REWARD_THRESHOLD = -0.02

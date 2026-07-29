@@ -1,5 +1,5 @@
 from app.bpmn_parser import parse_bpmn
-from app.metrics_calculator import calculate_metrics
+from app.utils.metrics_calculator import calculate_metrics
 
 from app.heuristics.executors.executor_parallelism import apply_parallelism
 from app.heuristics.executors.executor_elimination import apply_elimination

@@ -2,7 +2,7 @@ from fastapi import FastAPI, Body
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
-from app.inference import load_q_table, redesign_target_process
+from app.rl.inference import load_q_table, redesign_target_process
 from app.target_schema_parser import SubprocessNotFoundError, CircularSubprocessError
 
 app = FastAPI()
@@ -15,7 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TARGET_SCHEMA_MODEL_PATH = "data/trained_q_table_target_schema.pkl"
+TARGET_SCHEMA_MODEL_PATH = "app/rl/model/trained_q_table_target_schema.pkl"
 target_schema_q_table = (
     load_q_table(TARGET_SCHEMA_MODEL_PATH) if os.path.exists(TARGET_SCHEMA_MODEL_PATH) else None
 )

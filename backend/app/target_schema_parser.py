@@ -3,8 +3,8 @@ import re
 from pathlib import Path
 
 from app.bpmn_parser import parse_bpmn_string, ParsedProcess
-from app.metrics_calculator import calculate_metrics, calculate_theoretical_metrics
-from app import currency
+from app.utils.metrics_calculator import calculate_metrics, calculate_theoretical_metrics
+from app.utils import currency
 
 ACTIVITY_ID_PATTERN = re.compile(r"^Activity_(\d+)$")
 SUBPROCESS_ID_PATTERN = re.compile(r"^SubProcess_(\d+)$")

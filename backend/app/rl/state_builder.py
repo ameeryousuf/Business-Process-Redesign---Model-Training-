@@ -33,7 +33,7 @@ def build_state(parsed, time_value, cost_value, time_low, time_high, cost_low, c
 
 if __name__ == "__main__":
     from app.bpmn_parser import parse_bpmn
-    from app.metrics_calculator import calculate_metrics
+    from app.utils.metrics_calculator import calculate_metrics
 
     parsed = parse_bpmn("data/sample_process.bpmn")
     metrics = calculate_metrics(parsed)

@@ -15,7 +15,7 @@ def apply_trusted_party(parsed, task_id, cost_reduction_ratio=0.7):
 
 if __name__ == "__main__":
     from app.bpmn_parser import parse_bpmn
-    from app.metrics_calculator import calculate_metrics
+    from app.utils.metrics_calculator import calculate_metrics
 
     parsed = parse_bpmn("data/sample_process.bpmn")
     print("AS-IS Metrics:", calculate_metrics(parsed))

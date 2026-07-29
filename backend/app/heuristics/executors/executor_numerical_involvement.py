@@ -16,7 +16,7 @@ def apply_numerical_involvement(parsed, from_resource, to_resource):
 
 if __name__ == "__main__":
     from app.bpmn_parser import parse_bpmn
-    from app.metrics_calculator import calculate_metrics
+    from app.utils.metrics_calculator import calculate_metrics
 
     parsed = parse_bpmn("data/sample_process.bpmn")
     print("AS-IS Metrics:", calculate_metrics(parsed))
